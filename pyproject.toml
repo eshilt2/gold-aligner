@@ -1,0 +1,19 @@
+[project]
+name = "gold-aligner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "imodmodel>=0.0.15",
+    "mrcfile>=1.5.4",
+    "scikit-image>=0.21.0",
+    "scipy>=1.10.1",
+]
+
+[project.scripts]
+gold-aligner = "gold_aligner:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
