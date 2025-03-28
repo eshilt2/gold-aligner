@@ -24,7 +24,9 @@ from imodmodel.models import (
     ObjectHeader,
 )
 
-### Get AUNPs in tomograph
+### Get AUNPs in tomogram
+center = (543, 462)
+radius = 120
 with mrcfile.open("/nrs/liza/aretomoe3_remove_patch_reconstruct/20231017_EGmilled24-2_68_Vol.mrc") as mrc:
     invert_img = mrc.data * -1 # flip black and white
     size_of_tomo = mrc.data.shape
@@ -34,31 +36,33 @@ with mrcfile.open("/nrs/liza/aretomoe3_remove_patch_reconstruct/20231017_EGmille
         entry[0], entry[2] = entry[2], entry[0]
         peak_coords[peak_coords.index(entry)] = entry
     peak_coords = np.array(peak_coords)
+    ls_p_coords = list(zip(*peak_coords.tolist()))
+    peak_coords_OI = [ent for ent in peak_coords if center[0]+radius > ent[0] and ent[0] >center[0]-radius and center[1]+radius > ent[1] and ent[1] >center[1]-radius]
     img = mrc.data[1,:,:]
-
+    peak_coords_OI = np.array(peak_coords_OI)
 modelPeak = ImodModel(objects=[
     Object(
         contours=[
             Contour(
                 header=ContourHeader(
-                    psize= peak_coords.shape[0],
+                    psize= peak_coords_OI.shape[0],
                     flags=16,
                     time=0,
                     surf=0,
                 ),
-                points = peak_coords,
+                points = peak_coords_OI,
             )
         ]
     )
 ])
 
-modelPeak.to_file('peak_model.mod')
+modelPeak.to_file('peak_cropped_model.mod')
 
 
 ### Align gold particles to tilt series
 ## move tomogram to have center at 0,0,0
 translation = T(torch.tensor([[-size_of_tomo[2]/2, -size_of_tomo[1]/2, -size_of_tomo[0]/2]]))
-homogenise_coords = homogenise_coordinates(peak_coords.tolist())
+homogenise_coords = homogenise_coordinates(peak_coords_OI.tolist())
 homogenise_coords = homogenise_coords.float()
 translated_points = translation @ homogenise_coords.T
 
@@ -84,6 +88,7 @@ for algnmt in aretomo3_alignment.GlobalAlignments:
 ## translate back to 0,0 corner of tilt series
 with mrcfile.open("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.mrc") as mrc_tilt:
      tilt_img_size = mrc_tilt.data.shape
+     mrc_img = mrc_tilt.data
 translation = T(torch.tensor([tilt_img_size[2]/2, tilt_img_size[1]/2, 0]))
 coords_h = homogenise_coordinates(t_coords)
 coords_h = coords_h.float()
@@ -111,60 +116,70 @@ modelPeak = ImodModel(objects=[
     )
 ])
 
-modelPeak.to_file('2d_model_r_z_y.mod')
+modelPeak.to_file('2d_model_r_z_y_cropped.mod')
 
 
-### Old Code
+# Create model layer of AUNPs based on their position
+base_img = np.zeros_like(mrc_img)
+for gold in final_coords:
+    gold = gold.astype('int')
+    base_img[gold[2]][gold[1]][gold[0]] = 1
+# create perfect circle
+radii = 7
+side = radii
+# if radii % 2 == 0:
+#      side = radii
+# else:
+#      side = radii + 1
 
-# all_coords = []
-# peak_all_coords = []
-#     for z in range(70,mrc.data.shape[0]-1):
-#         current_slice = mrc.data[z, :,:]
-#         #print(mrc.data[228, 484, 485])
-#         minima = current_slice.min()
-#         minimaLoc = np.where(current_slice <=minima*.85) # can play around with the cutoff
+circle_array = np.zeros([side*2, side*2])
+center_point = (side, side)
+for x in range(0,side*2):
+    for y in range(0,side*2):
+        r = (x-center_point[0])**2 + (y-center_point[1])**2
+        if round(np.sqrt(r)) < radii:
+             circle_array[x][y] = 1
 
-#         #using local max
-#         invrt_img = current_slice * -1
-#         image_max = ndi.maximum_filter(invrt_img, size= 10, mode='constant')
-#         peak_coords = peak_local_max(invrt_img, min_distance = 25, exclude_border
-#  = 50, threshold_rel = .85).tolist()
-        
-#         for coord in peak_coords:
-#             #print(coord)
-#             coord[1], coord[0] = coord[0], coord[1]
-#             peak_coords[peak_coords.index(coord)] = coord + [z]
-#             #print(coord)
+kernal = torch.tensor(circle_array.astype('float'))
+image = torch.tensor(base_img.astype('float'))
+conv_image = torch.zeros_like(image)
+rev_conv_coords = []
+for i, layer in enumerate(image):
+    conv_image[i] = torch.nn.functional.conv2d(layer.unsqueeze(0).unsqueeze(0), kernal.unsqueeze(0).unsqueeze(0), padding = 'same')
+    conv_coords_zip = np.where(torch.asarray(conv_image[i]) >= 1)
+    conv_coords_zip = (np.array([i] * len(conv_coords_zip[0])),) + conv_coords_zip
+    conv_coords = list(zip(*conv_coords_zip))
+    for entry in conv_coords:
+        list_holder = list(entry)
+        list_holder.reverse()
+        rev_conv_coords.append(list_holder)
 
-#         peak_all_coords = peak_all_coords + peak_coords
-#         for mini in range(len(minimaLoc[0])):
-#             one_coord = [x[mini-1] for x in minimaLoc] + [z]
-#             one_coord[1], one_coord[0] = one_coord[0], one_coord[1] # <- this sets coord[0] to x, coord[1] to y
-#             if one_coord[0] >= 50 & one_coord[0] <= (mrc.data.shape[2]-50) & one_coord[1] >= 50 & one_coord[1] <= (mrc.data.shape[1]-50):
-#                 all_coords.append(one_coord)
-#             #else:
-#                 #print(one_coord)
+     
+conv_coords = np.array(rev_conv_coords)
+np.save('conv_coords.npy', conv_coords)
+np.save('conv_image.npy', conv_image)
+print('conv done')
+print(conv_coords.shape)
+#plt.imshow(conv_image[i])
+#plt.show()
 
-#         array_coords = np.array(all_coords)
-#         flt_min_coords = array_coords.astype(np.float32)
+modelPeak = ImodModel(objects=[
+    Object(
+        # header = ObjectHeader(
+        #     contsize = len(countours)
+        # )
+        contours=[
+            Contour(
+                header=ContourHeader(
+                    psize= conv_coords.shape[0],
+                    flags=16,
+                    time=0,
+                    surf=0,
+                ),
+                points = conv_coords,
+            )
+        ]
+    )
+])
 
-#     peak_array_coords = np.array(peak_all_coords)
-
-# model = ImodModel(objects=[
-#     Object(
-#         contours=[
-#             Contour(
-#                 header=ContourHeader(
-#                     psize= flt_min_coords.shape[0],
-#                     flags=16,
-#                     time=0,
-#                     surf=0,
-#                 ),
-#                 points = flt_min_coords,
-#             )
-#         ]
-#     )
-# ])
-
-# model.to_file('test_model.mod')
-
+modelPeak.to_file('2d_model_conv.mod')
