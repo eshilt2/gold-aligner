@@ -11,6 +11,7 @@ import matplotlib.image as mpimg
 from torch_affine_utils.transforms_3d import Rx, Ry, Rz, T, S
 from torch_affine_utils import homogenise_coordinates
 from skimage.feature import peak_local_max
+from gold_aligner.fit_gaussian import find_3d_gaussian_peaks, find_2d_gaussian_peak
 from imodmodel import ImodModel
 from imodmodel.models import (
     Contour,
@@ -36,10 +37,11 @@ from imodmodel.models import (
 # tilt_conv_au_model    T/F : will return .mod of convolved gold in tilt series
 # binning               flt : binning used in original aretomo3 tomogram reconstruction, default 4.85
 # conv_radius           int : sets size of gold particle used for convolution
+# gauss_peaks           T/F : if T will return peaks from gaussian
 
 
 
-def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85, center_OI = None, radius_OI = None, tomo_au_model = False, tilt_au_model = False, conv_radius = 7, tilt_conv_au_model = False):
+def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85, center_OI = None, radius_OI = None, tomo_au_model = False, tilt_au_model = False, conv_radius = 7, tilt_conv_au_model = False, gauss_peaks = False):
     
     ### Load in all files ################################################
     with mrcfile.open(tomo_path) as mrctomo: # get tomo data
@@ -55,17 +57,23 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
     ######################################################################
 
     ###  Select gold particles in tomo  ##################################
-    peak_coords = peak_local_max(invert_tomo, min_distance=3, threshold_rel = .4, exclude_border = (70,50,50)).tolist()
+    peaks = peak_local_max(invert_tomo, min_distance=3, threshold_rel = .4, exclude_border = (70,50,50)).tolist()
 
-    for entry in peak_coords: # convert zyx -> xyz
+    for entry in peaks: # convert zyx -> xyz
             entry[0], entry[2] = entry[2], entry[0]
-            peak_coords[peak_coords.index(entry)] = entry
-    peak_coords_OI = np.array(peak_coords)
-    
+            peaks[peaks.index(entry)] = entry
+
    # OPTIONAL
     if center_OI != None:  # get only the points within a certain area of the tomogram
-        peak_coords_OI = np.array([ent for ent in peak_coords if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI])
-    
+        peak_coords = [ent for ent in peaks if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
+
+
+    if gauss_peaks == True:
+        #find_3d_gaussian_peaks(invert_tomo, peak_coords, center_OI = None, radius_OI = None, tomo_au_model = False): 
+        peak_coords_OI = find_3d_gaussian_peaks(invert_tomo, peak_coords)
+    else:
+        peak_coords_OI = np.array(peak_coords)
+       
     if tomo_au_model == True: # returns .mod model of all points selected in tomogram
         modelPeak = ImodModel(objects=[
             Object(
@@ -83,7 +91,7 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
             )
         ])
 
-        modelPeak.to_file('tomo_au.mod')
+        modelPeak.to_file('tomo_au_gauss2.mod')
     ######################################################################
 
     ### Align gold particles to tilt series ##############################
@@ -215,6 +223,7 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
          cross = tilt_fft*conv_img_fft.conj()
          phase = fftshift(irfft2(cross))
          cropped_phase = phase[x_shape-50:x_shape+50, y_shape-50:y_shape+50]
+         # I want to select peak by gaussian right here #
          raw_shift[i] = np.unravel_index(np.argmax(cropped_phase, axis=None), cropped_phase.shape)
          shift[i] = raw_shift[i][0] - 50, raw_shift[i][1] - 50
          # OPTIONAL
@@ -235,14 +244,14 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
 
 
 
-tomo = "/nrs/liza/aretomoe3_rm_patch_recon_xy2/20231017_EGmilled24-2_68_Vol.mrc"
+tomo = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68_Vol.mrc"
 tilt = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68.mrc"
-aln = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68.aln"
-aln_output = "/nrs/liza/aretomoe3_rm_patch_recon_xy2/20231017_EGmilled24-2_68_xy2_new.aln"
+aln = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68_old.aln"
+aln_output = "/nrs/liza/aretomoe3_rm_patch_gauss/20231017_EGmilled24-2_68_gauss_new.aln"
 bin = 4.85
 center = (543, 462)
 radius = 120
-cropped_phase = realign_gold(tomo, tilt, aln, aln_output, bin, center, radius, tomo_au_model = True)
+cropped_phase = realign_gold(tomo, tilt, aln, aln_output, bin, center, radius, tomo_au_model = True, tilt_au_model=True, gauss_peaks= True)
 
 
 ## Sanity check of phase cross correlation
