@@ -1,5 +1,6 @@
 
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from imodmodel import ImodModel
 from imodmodel.models import (
@@ -64,27 +65,44 @@ def get_3d_gaussian(xyz, x0, y0, z0, amp, sigma_x, sigma_y, sigma_z, background)
 # image                   array : initially aligned data from tomogram.mrc * -1 
 # peak_coords             list: list of coordinate list [x,y,z]
 def find_2d_gaussian_peak(image, peak_coords): 
-    
+    if image[tuple(peak_coords)] < 0:
+        image = image - image.min()
     shape_img = image.shape
-    x = np.arange(shape_img[0])
-    y = np.arange(shape_img[1])
+    x = np.arange(shape_img[1]) # x = 0 would be the first column 
+    y = np.arange(shape_img[0]) # y = 0 would be the first row
 
     x,y = np.meshgrid(x,y)
     coords = (x, y)
-    guess = [shape_img[0]/2, shape_img[1]/2, image.max(), shape_img[0]/4, shape_img[1]/4, image.min()]
-    bounds = ([0, 0, 0, 0, 0.1, 0.1, 0.1, -np.inf], [np.inf, np.inf, np.inf, np.inf, 20, 20, 20, np.inf])
+    guess = [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/10, shape_img[1]/10, image.min()]
+    bounds = ([0, 0, 0, 0.1, 0.1, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
     fit, _ = curve_fit(get_2d_gaussian, coords, image.ravel(), p0=guess, bounds = bounds, method = 'trf')
     x0, y0, amp, sigx, sigy, back = fit
+    fitted_gauss = get_2d_gaussian((x,y),*fit).reshape(shape_img)
     raw_shift = (x0, y0) 
+    sigmas = (sigx, sigy)
 
-
-    return raw_shift
+    return raw_shift, fitted_gauss, sigmas
 
 
 def get_2d_gaussian(xy, x0, y0, amp, sigma_x, sigma_y, background):
     x, y = xy
-    g_3d = amp * np.exp(
+    g_2d = amp * np.exp(
         -(((x - x0)**2) / (2 * sigma_x**2) + 
           ((y - y0)**2) / (2 * sigma_y**2)) 
     ) + background
-    return g_3d.ravel()
+    return g_2d.ravel()
+
+
+# TESTING ##
+
+# fig, axs = plt.subplots(1,3)
+# for i in range(0,30,10):
+#     cropped_phase = np.load("/nrs/liza/gold-aligner/cropped_phases_for_gaussian_testing.npy")
+#     guess_shift = np.unravel_index(np.argmax(cropped_phase[i], axis=None), cropped_phase[i].shape)
+#     output, gauss = find_2d_gaussian_peak(cropped_phase[i], guess_shift)
+    
+#     axs[i//10].imshow(cropped_phase[i])
+#     axs[i//10].imshow(gauss, cmap='hot', alpha = 0.5)
+#     axs[i//10].plot(output[0], output[1], 'rx')
+
+# print('end')

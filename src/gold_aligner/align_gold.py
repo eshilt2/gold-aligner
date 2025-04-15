@@ -24,24 +24,22 @@ from imodmodel.models import (
     ObjectHeader,
 )
 
-# tomo_path             str : path to initially aligned tomogram.mrc file
-# tilt_path             str : path to initially aligned tiltseries.mrc file
-# aln_path              str : path to aretomo3 generated .aln file used for initially aligned tomogram
-# output_aln_path       str : output aln file name
-#
-#  OPTIONAL:
-# center_OI             (int,int) : will select gold only within sphere centered at (x,y)
-# radius_OI             int : will select gold only within sphere centered at (x,y) with radius r
-# tomo_au_model         T/F : will return .mod of selected gold in tomogram
-# tilt_au_model         T/F : will return .mod of selected gold in tilt series
-# tilt_conv_au_model    T/F : will return .mod of convolved gold in tilt series
-# binning               flt : binning used in original aretomo3 tomogram reconstruction, default 4.85
-# conv_radius           int : sets size of gold particle used for convolution
-# gauss_peaks           T/F : if T will return peaks from gaussian
-
-
-
-def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85, center_OI = None, radius_OI = None, tomo_au_model = False, tilt_au_model = False, conv_radius = 7, tilt_conv_au_model = False, gauss_peaks = False):
+def realign_gold(tomo_path,                     # str : path to initially aligned tomogram.mrc file
+                 tilt_path,                     # str : path to initially aligned tiltseries.mrc file
+                 aln_path,                      # str : path to aretomo3 generated .aln file used for initially aligned tomogram
+                 output_aln_path,               # str : output aln file name
+                 bin = 4.85,                    # flt : binning used in original aretomo3 tomogram reconstruction, default 4.85
+                 center_OI = None,              # (int,int) : will select gold only within sphere centered at (x,y)
+                 radius_OI = None,              # int : will select gold only within sphere centered at (x,y) with radius r
+                 tomo_au_model = False,         # T/F : will return .mod of selected gold in tomogram
+                 tilt_au_model = False,         # T/F : will return .mod of selected gold in tilt series
+                 conv_radius = 7,               # int : sets size of gold particle used for convolution
+                 tilt_conv_au_model = False,    # T/F : will return .mod of convolved gold in tilt series
+                 gauss_peaks = False,           # T/F : T will return gold peaks from gaussian; F will return pixel picked gold peaks
+                 alpha_tilt = None,             # int : correct Alpha Offset if known
+                 gauss_shift = False,            # T/F : T will return cross correlation shift from gaussian peaks; F will return pixel picked shifts 
+                 test = False
+                 ):            
     
     ### Load in all files ################################################
     with mrcfile.open(tomo_path) as mrctomo: # get tomo data
@@ -151,69 +149,74 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
 
     ### Create model layer of AUNPs based on their position ##############
     # creating base image where each gold particle peak is just a point
-    base_img = np.zeros_like(tilt)
-    for coord in final_coords:
-        base_img[coord[2].astype('int')][coord[1].astype('int')][coord[0].astype('int')] = 1
-    
-    # creating circle array
-    circle_img = np.zeros([conv_radius*2, conv_radius*2])
-    center_point = (conv_radius, conv_radius)
-    for x in range(conv_radius*2):
-         for y in range(conv_radius*2):
-              r = (x-center_point[0])**2 + (y-center_point[1])**2
-              if round(np.sqrt(r)) < conv_radius:
-                   circle_img[x][y] = 1
-    
-    # Convolve cirlce with pixel placement
-    kernal = torch.tensor(circle_img.astype('float'))
-    image = torch.tensor(base_img.astype('float'))
-    rev_conv_coords = []
-    conv_image = torch.zeros_like(image)
+    if test == False:
+        base_img = np.zeros_like(tilt)
+        for coord in final_coords:
+            base_img[coord[2].astype('int')][coord[1].astype('int')][coord[0].astype('int')] = 1
+        
+        # creating circle array
+        circle_img = np.zeros([conv_radius*2, conv_radius*2])
+        center_point = (conv_radius, conv_radius)
+        for x in range(conv_radius*2):
+            for y in range(conv_radius*2):
+                r = (x-center_point[0])**2 + (y-center_point[1])**2
+                if round(np.sqrt(r)) < conv_radius:
+                    circle_img[x][y] = 1
+        
+        # Convolve cirlce with pixel placement
+        kernal = torch.tensor(circle_img.astype('float'))
+        image = torch.tensor(base_img.astype('float'))
+        rev_conv_coords = []
+        conv_image = torch.zeros_like(image)
 
-    # convolving base and circle img
-    for i, layer in enumerate(image):
-         conv_image[i] = torch.nn.functional.conv2d(layer.unsqueeze(0).unsqueeze(0), kernal.unsqueeze(0).unsqueeze(0), padding = 'same')
-         conv_coords_zipped = np.where(torch.asarray(conv_image[i]) >= 1)
-         conv_coords_zipped = (np.array([i] * len(conv_coords_zipped[0])),) + conv_coords_zipped
-         conv_coords = list(zip(*conv_coords_zipped))
-         for entry in conv_coords:
-              holder = list(entry)
-              holder.reverse()
-              rev_conv_coords.append(holder)
+        # convolving base and circle img
+        for i, layer in enumerate(image):
+            conv_image[i] = torch.nn.functional.conv2d(layer.unsqueeze(0).unsqueeze(0), kernal.unsqueeze(0).unsqueeze(0), padding = 'same')
+            conv_coords_zipped = np.where(torch.asarray(conv_image[i]) >= 1)
+            conv_coords_zipped = (np.array([i] * len(conv_coords_zipped[0])),) + conv_coords_zipped
+            conv_coords = list(zip(*conv_coords_zipped))
+            for entry in conv_coords:
+                holder = list(entry)
+                holder.reverse()
+                rev_conv_coords.append(holder)
 
-    # Optional
-    if tilt_conv_au_model == True:
-        conv_coords = np.array(rev_conv_coords)
+        # Optional
+        if tilt_conv_au_model == True:
+            conv_coords = np.array(rev_conv_coords)
 
-        modelPeak = ImodModel(objects=[
-            Object(
-                # header = ObjectHeader(
-                #     contsize = len(countours)
-                # )
-                contours=[
-                    Contour(
-                        header=ContourHeader(
-                            psize= conv_coords.shape[0],
-                            flags=16,
-                            time=0,
-                            surf=0,
-                        ),
-                        points = conv_coords,
-                    )
-                ]
-            )
-        ])
+            modelPeak = ImodModel(objects=[
+                Object(
+                    # header = ObjectHeader(
+                    #     contsize = len(countours)
+                    # )
+                    contours=[
+                        Contour(
+                            header=ContourHeader(
+                                psize= conv_coords.shape[0],
+                                flags=16,
+                                time=0,
+                                surf=0,
+                            ),
+                            points = conv_coords,
+                        )
+                    ]
+                )
+            ])
 
-        modelPeak.to_file('tilt_conv_au.mod')
+            modelPeak.to_file('tilt_conv_au.mod')
+    else:
+        conv_image =  np.load("conv_image.npy")
 
-
-    ######################################################################
+        ######################################################################
     
     ### Phase cross correlation to get shift
     tilt_inv = tilt*-1
     raw_shift = np.zeros([tilt_inv.shape[0],2])
     shift = np.zeros([tilt_inv.shape[0],2])
+    sigmas = np.zeros([tilt_inv.shape[0],2])
+    gauss_fits = np.zeros([conv_image.shape[0],100,100])
     saved_cropped_phase = np.zeros([conv_image.shape[0],100,100])
+
 
     y_shape = int(conv_image.shape[2]/2)
     x_shape = int(conv_image.shape[1]/2)
@@ -223,43 +226,55 @@ def realign_gold(tomo_path, tilt_path, aln_path, output_aln_path, binning = 4.85
          cross = tilt_fft*conv_img_fft.conj()
          phase = fftshift(irfft2(cross))
          cropped_phase = phase[x_shape-50:x_shape+50, y_shape-50:y_shape+50]
-         # I want to select peak by gaussian right here #
          raw_shift[i] = np.unravel_index(np.argmax(cropped_phase, axis=None), cropped_phase.shape)
+         
+         if gauss_shift == True:
+            raw_shift[i], gauss_fits[i], sigmas[i] = find_2d_gaussian_peak(cropped_phase, raw_shift[i].astype('int'))
          shift[i] = raw_shift[i][0] - 50, raw_shift[i][1] - 50
          # OPTIONAL
          saved_cropped_phase[i] = cropped_phase
 
     ######################################################################
-
     ### Create new .aln file
+    if alpha_tilt != None:
+        old_alpha = aretomo3_alignment.AlphaOffset
+        aretomo3_alignment.AlphaOffset = alpha_tilt
+        dif_alnmt = alpha_tilt - old_alpha
+    
     for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
         algnmt.tx = algnmt.tx + shift[i][1] 
         algnmt.ty = algnmt.ty + shift[i][0]
+        # Optional
+        if alpha_tilt != None:
+             algnmt.tilt = algnmt.tilt + dif_alnmt
+
     
     write(aretomo3_alignment, output_aln_path)
 
     return saved_cropped_phase
 
 
-
-
-
 tomo = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68_Vol.mrc"
 tilt = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68.mrc"
 aln = "/nrs/liza/aretomoe3_rm_patch/20231017_EGmilled24-2_68_old.aln"
-aln_output = "/nrs/liza/aretomoe3_rm_patch_gauss/20231017_EGmilled24-2_68_gauss_new.aln"
+aln_output = "/nrs/liza/aretomoe3_rm_patch_all_gauss/20231017_EGmilled24-2_68_all_gauss.aln"
 bin = 4.85
 center = (543, 462)
 radius = 120
-cropped_phase = realign_gold(tomo, tilt, aln, aln_output, bin, center, radius, tomo_au_model = True, tilt_au_model=True, gauss_peaks= True)
+alpha_tilt = 20
+cropped_phase = realign_gold(tomo, tilt, aln, aln_output, bin, center, radius, tomo_au_model = False, tilt_au_model=False, gauss_peaks= True, alpha_tilt = alpha_tilt, gauss_shift = True, test = True)
 
 
 ## Sanity check of phase cross correlation
-fig, axs = plt.subplots(6, 6)
-axs = axs.ravel()
-for i in range(cropped_phase.shape[0]):
-     axs[i].imshow(cropped_phase[i])
-     axs[i].plot(50,50, "o", markersize=3)
-print('end')
-
-
+# fig, axs = plt.subplots(6, 6)
+# axs = axs.ravel()
+# for i in range(saved_cropped_phase.shape[0]):
+#      axs[i].imshow(saved_cropped_phase[i])
+# #     axs[i].imshow(TEST[i], cmap = 'hot', alpha = .5)
+# #     axs[i].axhline(y=50, color='white', linestyle='--', linewidth=0.5)
+# #     axs[i].axvline(x=50, color='white', linestyle='--', linewidth=0.5)
+#      axs[i].plot(raw_shift[i][0], raw_shift[i][1], 'rx', markersize=1)
+# axs[33].axis('off')
+# axs[34].axis('off')
+# axs[35].axis('off')
+# print('end')
