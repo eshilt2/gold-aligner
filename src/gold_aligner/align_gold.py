@@ -42,10 +42,7 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
                  tilt_au_model = False,         # T/F : will return .mod of selected gold in tilt series
                  conv_radius = 7,               # int : sets size of gold particle used for convolution
                  tilt_conv_au_model = False,    # T/F : will return .mod of convolved gold in tilt series
-                 gauss_peaks = False,           # T/F : T will return gold peaks from gaussian; F will return pixel picked gold peaks
-                 alpha_tilt = None,             # int : correct Alpha Offset if known
-                 sub_pix_circle = False,         # T/F : T will return convolution with sub pixel precision; F will return pixel precision convolution
-                 gauss_shift = False            # T/F : T will return cross correlation shift from gaussian peaks; F will return pixel picked shifts 
+                 alpha_offset = None,             # int : correct Alpha Offset if known
                  ):            
     
     ### Load in all files ################################################
@@ -57,7 +54,8 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
 
     with mrcfile.open(tilt_path) as mrctilt:
         if aretomo3_alignment.DarkFrames == []:
-            base_img = np.zeros_like(tilt)
+            tilt = mrctilt.data
+            tilt_shape = tilt.shape
         else:
             tilt = mrctilt.data.tolist()
             dark_slice = aretomo3_alignment.DarkFrames[0].section_idx
@@ -79,13 +77,12 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
         peak_coords = [ent for ent in peaks if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
     else:
         peak_coords = peaks
-    if gauss_peaks == True:
-        #find_3d_gaussian_peaks(invert_tomo, peak_coords, center_OI = None, radius_OI = None, tomo_au_model = False): 
-        peak_coords_OI, _, _ = find_3d_gaussian_peaks(invert_tomo, peak_coords)
-    else:
-        peak_coords_OI = np.array(peak_coords)
+
+    peak_coords_OI, _, _ = find_3d_gaussian_peaks(invert_tomo, peak_coords)
+
        
     if tomo_au_model == True: # returns .mod model of all points selected in tomogram
+
         modelPeak = ImodModel(objects=[
             Object(
                 contours=[
@@ -102,7 +99,7 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
             )
         ])
 
-        modelPeak.to_file('tomo54_au.mod')
+        modelPeak.to_file('tomo60_au.mod')
     ######################################################################
 
     ### Align gold particles to tilt series ##############################
@@ -158,19 +155,14 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
             )
         ])
 
-            modelPeak.to_file('tilt54_au.mod')
+            modelPeak.to_file('tilt60_au.mod')
 
     ######################################################################
 
     ### Create model layer of AUNPs based on their position ##############
     # creating base image where each gold particle peak is just a point
-    #base_img = np.zeros([tilt.shape[0], tilt.shape[2], tilt.shape[1]])
+
     base_img = np.zeros_like(tilt)
-
-
-    if sub_pix_circle == False:
-        for coord in final_coords:
-            base_img[coord[2].astype('int')][coord[1].astype('int')][coord[0].astype('int')] = 1
     
     # creating circle array
     circle_img = np.zeros([conv_radius*2, conv_radius*2])
@@ -181,16 +173,13 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
             if round(np.sqrt(r)) < conv_radius:
                 circle_img[x][y] = 1
 
-    if sub_pix_circle == True:
-        for i, slice in enumerate(base_img):
-            adj_coords = [np.array([coords[1]+1, coords[0]+1]) for coords in final_coords[np.where(final_coords[:,2] == i)]]
-            layer, _ = insert_into_image_2d(
-            values = torch.ones(len(adj_coords), dtype=torch.float32),
-            #values=torch.ones(len(final_coords[np.where(final_coords[:,2] == i)][:,0:2]),dtype=torch.float32),
-            image=torch.tensor(slice, dtype=torch.float32),
-            coordinates=torch.tensor(adj_coords.copy(), dtype=torch.float32))
-            #coordinates=torch.tensor(np.fliplr(final_coords[np.where(final_coords[:,2] == i)][:,0:2]).copy(), dtype=torch.float32))
-            base_img[i] = layer
+    for i, slice in enumerate(base_img):
+        adj_coords = [np.array([coords[1]+1, coords[0]+1]) for coords in final_coords[np.where(final_coords[:,2] == i)]]
+        layer, _ = insert_into_image_2d(
+        values = torch.ones(len(adj_coords), dtype=torch.float32),
+        image=torch.tensor(slice, dtype=torch.float32),
+        coordinates=torch.tensor(adj_coords.copy(), dtype=torch.float32))
+        base_img[i] = layer
 
     # Convolve cirlce with pixel placement
     kernal = torch.tensor(circle_img.astype('float'))
@@ -234,7 +223,7 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
             )
         ])
 
-        modelPeak.to_file('tilt54_au.mod')
+        modelPeak.to_file('tilt60_au.mod')
 
 
     ######################################################################
@@ -255,43 +244,38 @@ def realign_gold(tomo_path,                     # str : path to initially aligne
          phase = fftshift(irfft2(cross))
          cropped_phase = phase[x_shape-50:x_shape+50, y_shape-50:y_shape+50]
          raw_shift[i] = np.unravel_index(np.argmax(cropped_phase, axis=None), cropped_phase.shape)
-         
-         if gauss_shift == True:
-            raw_shift[i], _, _ = find_2d_gaussian_peak(cropped_phase, raw_shift[i].astype('int'))
+         raw_shift[i], _, _ = find_2d_gaussian_peak(cropped_phase, raw_shift[i].astype('int'))
          shift[i] = raw_shift[i][0] - 50, raw_shift[i][1] - 50
-         # OPTIONAL
          saved_cropped_phase[i] = cropped_phase
 
     ######################################################################
-    ## Create new .aln file
-    if alpha_tilt != aretomo3_alignment.AlphaOffset:
-        aretomo3_alignment = fix_alpha_offset(aretomo3_alignment, alpha_tilt)
     
-    if gauss_shift == False:
-        for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
-            algnmt.tx = algnmt.tx + shift[i][1] 
-            algnmt.ty = algnmt.ty + shift[i][0]
+    ### Create new .aln file
+
+    if alpha_offset != aretomo3_alignment.AlphaOffset: # checks if alpha offset is incorrect and adjusts it
+        aretomo3_alignment = fix_alpha_offset(aretomo3_alignment, alpha_offset)
     
-    else:
-        for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
-            algnmt.tx = algnmt.tx + shift[i][0] 
-            algnmt.ty = algnmt.ty + shift[i][1]
+    for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
+        algnmt.tx = algnmt.tx + shift[i][0] 
+        algnmt.ty = algnmt.ty + shift[i][1]
                 
     write(aretomo3_alignment, output_aln_path)
 
     return saved_cropped_phase, shift
 
-tomo = "/nrs/liza/Aret3_rm_patch_tomo54_one_itr/20231017_EGmilled24-2_54_Vol.mrc"
-tilt = "/nrs/liza/Aret3_rm_patch_tomo54/20231017_EGmilled24-2_54.mrc"
-aln = "/nrs/liza/Aret3_rm_patch_tomo54_one_itr/20231017_EGmilled24-2_54_one_itr.aln"
-aln_output = "/nrs/liza/Aret3_rm_patch_tomo54_two_itr/20231017_EGmilled24-2_54_two_itr.aln"
+tomo = "/nrs/liza/Aret3_rm_patch_tomo54/20231017_EGmilled24-2_60_Vol.mrc"
+tilt = "/nrs/liza/Aret3_rm_patch_tomo54/20231017_EGmilled24-2_60.mrc"
+aln = "/nrs/liza/Aret3_rm_patch_tomo54/20231017_EGmilled24-2_60.aln"
+aln_output = "/nrs/liza/Aret3_rm_patch_tomo54_two_itr/test.aln"
 bin = 4.85
 alpha_tilt = 20
-border = (70, 75, 75)
-center = (515,615)
-radius = 120
+#border = (70, 75, 75)
+#center = (515,615)
+#radius = 120
+border = (70,50,50)
+center = None
+radius = None
 threshold = 0.3
-realign_gold(tomo, tilt, aln, aln_output, border_cutoff= border, rel_threshold=threshold, bin = bin, center_OI=center, radius_OI=radius, tomo_au_model = True, tilt_au_model=True, gauss_peaks= True, alpha_tilt = alpha_tilt, sub_pix_circle = True, gauss_shift = True)
-
+realign_gold(tomo, tilt, aln, aln_output, border_cutoff= border, rel_threshold=threshold, bin = bin, center_OI=center, radius_OI=radius, tomo_au_model = True, tilt_au_model=True, alpha_offset = alpha_tilt)
 
 
