@@ -9,21 +9,19 @@ from gold_aligner.fit_gaussian import find_2d_gaussian_peak
 from scipy.ndimage import rotate
 
 
-def make_model_layer_components(tilt,           # array : tilt series array
-                                conv_radius,    # int   : radius of sphere
-                                final_coords    # array : coordinates of points
-                                
+def make_model_layer_components(tilt,               # array : tilt series array
+                                aln,                # 
+                                conv_radius,        # int   : radius of sphere
+                                final_coords,       # array : coordinates of points
+                                shape = 'circle'    # str   : specify circle or sphere projection used for cross correlation  
                                 ):
+    
     base_img = np.zeros_like(tilt)
     
-    # creating circle array
-    circle_img = np.zeros([conv_radius*2, conv_radius*2])
-    center_point = (conv_radius, conv_radius)
-    for x in range(conv_radius*2):
-        for y in range(conv_radius*2):
-            r = (x-center_point[0])**2 + (y-center_point[1])**2
-            if round(np.sqrt(r)) < conv_radius:
-                circle_img[x][y] = 1
+    if shape == 'circle':
+        shape_img = make_circle(conv_radius)
+    elif shape == 'elipse':
+        shape_img = make_sphere(conv_radius, aln)
 
     for i, slice in enumerate(base_img):
         adj_coords = [np.array([coords[1]+1, coords[0]+1]) for coords in final_coords[np.where(final_coords[:,2] == i)]]
@@ -32,9 +30,20 @@ def make_model_layer_components(tilt,           # array : tilt series array
         image=torch.tensor(slice, dtype=torch.float32),
         coordinates=torch.tensor(adj_coords.copy(), dtype=torch.float32))
         base_img[i] = layer
-    return base_img, circle_img 
+    return base_img, shape_img 
 
-def make_sphere(radius, bin, aln): # so far not used but here for implementation
+def make_circle(conv_radius):
+    # creating circle array
+    circle_img = np.zeros([conv_radius*2, conv_radius*2])
+    center_point = (conv_radius, conv_radius)
+    for x in range(conv_radius*2):
+        for y in range(conv_radius*2):
+            r = (x-center_point[0])**2 + (y-center_point[1])**2
+            if round(np.sqrt(r)) < conv_radius:
+                circle_img[x][y] = 1
+    return circle_img
+
+def make_sphere(radius, aln): # so far not used but here for implementation
     sphere_coords = []
     sphere = np.zeros([radius*2, radius*2, radius*2])
     center_point = (radius, radius, radius)
@@ -62,13 +71,16 @@ def convolve_image(circle_img,      # array     : circle with wich to convolve
                    base_img,        # array     : the image with peaks at which to convolve circle 
                    model = False    # bool      : if T returns coords for creation of imod model 
                    ):
-    kernal = torch.tensor(circle_img.astype('float'))
+    if type(circle_img) is not list:
+        kernal = torch.tensor(circle_img.astype('float'))
     image = torch.tensor(base_img.astype('float'))
     rev_conv_coords = []
     conv_image = torch.zeros_like(image)
 
     # convolving base and circle img
     for i, layer in enumerate(image):
+        if type(circle_img) is list:
+            kernal = torch.tensor(circle_img[i].astype('float'))
         conv_image[i] = torch.nn.functional.conv2d(layer.unsqueeze(0).unsqueeze(0), kernal.unsqueeze(0).unsqueeze(0), padding = 'same')
         
         if model == True:
