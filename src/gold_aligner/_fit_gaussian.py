@@ -76,7 +76,10 @@ def find_2d_gaussian_peak(image,        # array : initially aligned data from to
     coords = (x, y)
     guess = [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/20, shape_img[1]/20, image.min()] # [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/10, shape_img[1]/10, image.min()]
     bounds = ([0, 0, 0, 0.1, 0.1, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-    fit, _ = curve_fit(get_2d_gaussian, coords, image.ravel(), p0=guess, bounds = bounds, method = 'trf', maxfev = 5000)
+    try:
+        fit, _ = curve_fit(get_2d_gaussian, coords, image.ravel(), p0=guess, bounds = bounds, method = 'trf', maxfev = 5000)
+    except RuntimeError:
+        fit, _ = curve_fit(get_2d_gaussian, coords, image.ravel(), p0=guess, bounds = bounds, method = 'dogbox', maxfev = 5000)
     x0, y0, amp, sigx, sigy, back = fit
     fitted_gauss = get_2d_gaussian((x,y),*fit).reshape(shape_img)
     raw_shift = (x0, y0) 
@@ -122,6 +125,17 @@ def get_3d_sigmas(tomo_path,            # str : path to tomogram
 
     
     return sigmas, fits
+
+def plot_3d_sigmas(sigmas, tomo_name, sigma_plot_path):
+        sig_title = ['x','y','z']
+        fig, axs = plt.subplots(1,3, sharex=True, sharey=True) 
+        sigmas = np.array(sigmas)
+        axs.ravel()
+        for i in range(sigmas.shape[1]):
+            axs[i].set_title(sig_title[i])
+            axs[i].violinplot(sigmas[:,i])
+        fig.suptitle(f"{tomo_name} Distribution of Gaussian Standard Deviation ")
+        plt.savefig(sigma_plot_path, dpi = 300)
 
 def get_mixed_gaussian(invert_tomo, peak_coords, plot = False):
     i = 0
@@ -262,7 +276,6 @@ def get_3dgauss_mixture_take_1(xyz, x0_1, y0_1, z0_1, x0_2, y0_2, z0_2, pi, amp_
 
 
 
-
 if __name__ == '__main__':
     # # TESTING ##
     # # tomo_3 = "/nrs/liza/aretomoe3_rm_patch_gauss_circle_alpha_two_itr/20231017_EGmilled24-2_68_Vol.mrc"
@@ -335,7 +348,7 @@ if __name__ == '__main__':
         peak_coords = peaks
 
     test = get_mixed_gaussian(invert_tomo, peak_coords, plot = True)
-    print('end')
+    # print('end')
 
 
 
@@ -461,5 +474,6 @@ if __name__ == '__main__':
 
 
 #plt.show()
-print('end')
+# print('end')
+
 
