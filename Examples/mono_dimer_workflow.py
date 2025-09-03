@@ -11,9 +11,10 @@ import math
 import subprocess
 import glob
 import pandas as pd
+import csv
 # from gold_aligner.align_gold import realign_gold
 # from gold_aligner.fix_alpha_offset import fix_alpha_offset 
-from gold_aligner._convert_imod_to_aretomo_aln import imod_to_aretomo, aretomo_to_imod
+from gold_aligner._convert_imod_to_aretomo_aln import imod_to_aretomo, aretomo_to_imod, full_aretomo_to_imod
 import imodmodel
 from gold_aligner._align_to_tilt_series import *
 from gold_aligner._select_aunps import *
@@ -33,7 +34,7 @@ from torch_grid_utils.coordinate_grid import coordinate_grid
 from torch.nn.functional import conv2d
 from scipy.spatial import KDTree
 
-def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln_path, center_OI, radius_OI, bin, alpha_offset):
+def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln_path, center_OI, radius_OI, bin, alpha_offset, date):
     ### Load in all files ################################################
     with mrcfile.open(tomo_path) as mrctomo: # get tomo data
         invert_tomo = mrctomo.data * -1 #flip black and white so peak_local_max picks up dark points
@@ -67,13 +68,9 @@ def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln
 
     peaks = [ent for ent in picks if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
     peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, peaks)
-    make_imod_model(peak_coords_OI, tomo_num, custom_name = f'/nrs/liza/cathy_tomos/mono_dimer_oneItr/{tomo_name}_mpicks_oneItr')
-    plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/08_25_2025/{tomo_name}:_{len(list_of_sigmas)}')
+    make_IMOD_model_UPDATED(peak_coords_OI, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{tomo_name}_mpicks_oneItr')
+    plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}')
     plt.close()
-    ##### for testing 
-    array = np.array(peaks)
-    make_imod_model(array, tomo_num, custom_name = f'/nrs/liza/cathy_tomos/mono_dimer_oneItr/{tomo_name}_mpicks_test')
-    #####
     print('made model')
     print('')
 
@@ -85,16 +82,16 @@ def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln
     conv_image, rev_conv_coords = convolve_image(circle_img, base_img, False)
     cropped_phase, shift, saved_cropped_phase = cross_corr(tilt*-1, conv_image)
     fig1 = plot_xcorr_peaks(saved_cropped_phase, shift, f'{tomo_name} cross corr')
-    plt.savefig(f"/groups/liza/Pictures/08_25_2025/{tomo_name}:_{len(list_of_sigmas)}_xcorr.png", dpi=300)
+    plt.savefig(f"/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}_xcorr.png", dpi=300)
     plt.close()
 
     ideal_sigma, auto_shift, auto_cropped_phase = cross_corr(conv_image, conv_image)
     fig2 = plot_xcorr_peaks(auto_cropped_phase, auto_shift, f'Auto xcorr conv_img {tomo_name}')
-    plt.savefig(f"/groups/liza/Pictures/08_25_2025/{tomo_name}:_{len(list_of_sigmas)}_auto_xcorr_mask.png", dpi=300)
+    plt.savefig(f"/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}_auto_xcorr_mask.png", dpi=300)
 
     _, autoxcorr_shift, autoxcorr_phase = cross_corr(tilt * -1, conv_image, ideal_sigma)
     fig3 = plot_xcorr_peaks(autoxcorr_phase, autoxcorr_shift, f'{tomo_name} with ideal sigma')
-    plt.savefig(f"/groups/liza/Pictures/08_25_2025/{tomo_name}:_{len(list_of_sigmas)}_autoxcorrxcorr_with_fixed_sigma.png", dpi=300)
+    plt.savefig(f"/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}_autoxcorrxcorr_with_fixed_sigma.png", dpi=300)
     plt.close()
 
     if alpha_offset != aretomo3_alignment.AlphaOffset and alpha_offset != None: # checks if alpha offset is incorrect and adjusts it
@@ -118,8 +115,10 @@ def create_aretomo_alns(path_to_all_folders, core_path, cmd_path):
     "20250418_AMmilled29-2_Position_86",
     "20250418_AMmilled29-2_Position_87"]
     for i, folder in enumerate(folder_list):
-        if folder == '.stfolder' or folder in skip_list: # allows for picking up after an error (use debugger to see which folder it got stuck on)
+        if folder == '.stfolder': # allows for picking up after an error (use debugger to see which folder it got stuck on)
             continue
+        # if folder in skip_list:
+        #     folder = 
         tilt_path = f"{path_to_all_folders}{folder}/{folder}.mrc"
         aln_path = f"{path_to_all_folders}{folder}/best_alignment/{folder}"
         if os.path.exists(f"{aln_path}.xf"):
@@ -179,59 +178,90 @@ def create_aretomo_alns(path_to_all_folders, core_path, cmd_path):
     print('end')
 
 if __name__ == "__main__":
-    # with mrcfile.open(tilt) as mrctilt:
-    #     tilt = mrctilt.data
-    #     tilt_shape = tilt.shape
-    #     invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
-    # read_alignment = read("/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/20241206_AMmilled24-3_107/best_alignment/20241206_AMmilled24-3_107")
-    # aretomo_aln = imod_to_aretomo(read_alignment, invert_shape, "/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/20241206_AMmilled24-3_107/best_alignment/tilt.com" )
-    # output_path = "/nrs/liza/cathy_tomos/mono_dimer_init/20241206_AMmilled24-3_107/20241206_AMmilled24-3_107_init.aln"
-    # write(aretomo_aln, f"{output_path}")
-    # path_to_all_folders = "/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/"
+# grab tomo name --> read in mono coords --> set tomo to 3DCTF corrected tomo --> aln to init aln
+    center = np.genfromtxt('/nrs/liza/cathy_tomos/mono_dimer/mono_dimers.csv', delimiter=',', skip_header = 1)    
+    folder_list = os.listdir("/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/")
+    special_list = [
+    "20250418_AMmilled29-2_Position_58_7",
+    "20250418_AMmilled29-2_Position_88",
+    "20250418_AMmilled29-2_Position_47",
+    "20250418_AMmilled29-2_Position_86",
+    "20250418_AMmilled29-2_Position_87"] #,
+    #"20241206_AMmilled24-3_107"] # done
+    for i, folder in enumerate(folder_list):
+        folder2 = folder
+        if folder in special_list: #or folder != "20241206_AMmilled24-3_107":
+            if folder == "20250418_AMmilled29-2_Position_58_7":
+                folder2 = folder[-13:]
+            else:
+                folder2 = folder[-11:]
+
+        if folder == "20241206_AMmilled24-3_107" or i < 6:
+            continue
+            
+        print(folder)
+        with open(f"/nrs/elferich/hoyung_coordinates/{folder2}/{folder2}_full_rec_SIRT_3DCTF_BIN2.coords") as f:
+            mylist = f.read().splitlines()
+            listing = [i.split() for i in mylist]
+            int_list = [[int(y) for y in x] for x in listing]
+            mono_list = [n for n in int_list if n[0] == 1]
+            array = np.array(mono_list)
+            # array2 = np.array(mono_list)[:,1:]
+            # df = pd.DataFrame({'object_id' : [0 for i in range(len(array))],
+            # 'contour_id': [0 for i in range(len(array))],
+            # 'x': array[:,1],
+            # 'y': array[:,2],
+            # 'z': array[:,3]})
+            
+            # fix Z for my tomo 
+            #array[:,-1] += 15
+            m_picks = np.array(array[:,1:4]/2).astype(int)
+            make_IMOD_model_UPDATED(m_picks, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_hoyoung_picks_direct')
+
+            # make_imod_model(array, 'asd', "tomo", f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_mpicks')
+        # imodmodel.write(df, '/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_hoyoung_picksx2.mod')
+        # tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder}_full_rec.mrc"
+        # tomo = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}/{folder}_Vol.mrc"
+        tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder2}_full_rec_BP_3DCTF_BIN4.mrc"
+        tilt = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/{folder2}.mrc"
+        aln = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
+        output_aln = f"/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder2}_mpicks_oneItr.aln"
+        tilt_com_path = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/tilt.com"
+        for line in open(tilt_com_path):
+            if re.findall(r'OFFSET*', line) == ['OFFSET']:
+                match = re.findall(r'[0-9]+.[0-9]+', line)
+                alphaOffset = float(match[0])
+        
+        
+        with mrcfile.open(tilt) as mrctilt:
+            tilt_data = mrctilt.data
+            tilt_shape = tilt_data.shape
+            invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
+        read_alignment = read(f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder2}")
+        aretomo_aln = imod_to_aretomo(read_alignment, invert_shape, f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/tilt.com" )
+        output_path = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
+        write(aretomo_aln, f"{output_path}")
+    #path_to_all_folders = "/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/"
     # core_path = "/nrs/liza/cathy_tomos/mono_dimer/"
     # cmd_path = "/nrs/liza/cathy_tomos/cmd_monodi_init"
     # create_aretomo_alns(path_to_all_folders, core_path, cmd_path)
 
-    with open("/nrs/elferich/hoyung_coordinates/20241206_AMmilled24-3_107/20241206_AMmilled24-3_107_full_rec_SIRT_3DCTF_BIN2.coords") as f:
-        mylist = f.read().splitlines()
-        listing = [i.split() for i in mylist]
-        int_list = [[int(y) for y in x] for x in listing]
-        mono_list = [n for n in int_list if n[0] == 1]
-        array = np.array(mono_list)
-        df = pd.DataFrame({'object_id' : [0 for i in range(len(array))],
-        'contour_id': [0 for i in range(len(array))],
-        'x': array[:,1],
-        'y': array[:,2],
-        'z': array[:,3]})
+        realign_with_mono_selected(m_picks, tomo, tilt, aln, output_aln, (center[i,1], center[i,2]), 120, 4,  alphaOffset, "09_02_2025")
         
-        # imodmodel.write(df, '/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/20241206_AMmilled24-3_107_hoyoung_picks_direct.mod')
-        # fix Z for my tomo 
-        array[:,-1] += 15
-        m_picks = np.array(array[:,1:4]/2).astype(int)
-        make_imod_model(array, 'asd', "tomo", '/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/20241206_AMmilled24-3_107')
-    # imodmodel.write(df, '/nrs/liza/cathy_tomos/mono_dimer_oneItr/20241206_AMmilled24-3_107_hoyoung_picksx2.mod')
-    # tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/20241206_AMmilled24-3_107/best_alignment/20241206_AMmilled24-3_107_full_rec.mrc"
-    # tomo = f"/nrs/liza/cathy_tomos/mono_dimer_init/20241206_AMmilled24-3_107/20241206_AMmilled24-3_107_Vol.mrc"
-    tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/20241206_AMmilled24-3_107/best_alignment/20241206_AMmilled24-3_107_full_rec_BP_3DCTF_BIN4.mrc"
-    tilt = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/20241206_AMmilled24-3_107/20241206_AMmilled24-3_107.mrc"
-    aln = f"/nrs/liza/cathy_tomos/mono_dimer_init/20241206_AMmilled24-3_107/20241206_AMmilled24-3_107_init.aln"
-    output_aln = f"/nrs/liza/cathy_tomos/mono_dimer_oneItr/20241206_AMmilled24-3_107_mpicks_oneItr.aln"
-    realign_with_mono_selected(m_picks, tomo, tilt, aln, output_aln, (245, 500), 120, 4,  22.68)
+        # realign_gold(tomo, tilt, aln, output_aln, bin = 4, rel_threshold= 0.6, center_OI = (245, 500), radius_OI=120, tomo_au_model= True)
+        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/{folder}', shell = True)
+        full_aretomo_to_imod(output_aln, tilt, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/{folder}')
 
-    # realign_gold(tomo, tilt, aln, output_aln, bin = 4, rel_threshold= 0.6, center_OI = (245, 500), radius_OI=120, tomo_au_model= True)
-
-    full_aretomo_to_imod(output_aln, tilt, '/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/20241206_AMmilled24-3_107')
-
-    print('done')
+        print('done')
 
 
 
-    # with open("/nrs/elferich/hoyung_coordinates/20241206_AMmilled24-3_107/extract_m_20241206_AMmilled24-3_107.txt") as f:
-    #     mylist = f.read().splitlines()
-    # listing = [i.split() for i in mylist]
-    # array = np.float64(np.array(listing))
-    # df = pd.DataFrame({'object_id' : [0 for i in range(len(array))],
-    # 'contour_id': [0 for i in range(len(array))],
-    # 'x': array[:,2]*2,
-    # 'y': array[:,1]*2,
-    # 'z': array[:,0]*2})
+        # with open("/nrs/elferich/hoyung_coordinates/20241206_AMmilled24-3_107/extract_m_20241206_AMmilled24-3_107.txt") as f:
+        #   mylist = f.read().splitlines()
+        # listing = [i.split() for i in mylist]
+        # array = np.float64(np.array(listing))
+        # df = pd.DataFrame({'object_id' : [0 for i in range(len(array))],
+        # 'contour_id': [0 for i in range(len(array))],
+        # 'x': array[:,2]*2,
+        # 'y': array[:,1]*2,
+        # 'z': array[:,0]*2})
