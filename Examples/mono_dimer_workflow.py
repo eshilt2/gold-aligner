@@ -34,7 +34,17 @@ from torch_grid_utils.coordinate_grid import coordinate_grid
 from torch.nn.functional import conv2d
 from scipy.spatial import KDTree
 
-def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln_path, center_OI, radius_OI, bin, alpha_offset, date):
+def realign_with_mono_selected(picks,               # array : preselected picks used as initial search points for aunps
+                            tomo_path,              # str   : path and name of tomogram
+                            tilt_path,              # str   : path and name of tilt series
+                            aln_path,               # str   : path and name of aligned tomogram
+                            output_aln_path,        # str   : path and name of outputed aln file
+                            center_OI,              #(int, int, int)    : center of cylinder that will determine selected aunps in radius around center
+                            radius_OI,              # int   : radius around center_OI where aunps will be selected
+                            bin,                    # int   : binning of image
+                            alpha_offset,           # flt   : ensures proper alpha offset of imod file
+                            date                    # str   : used by me to save cross corr images to folder called whatever the date in Pictures
+                            ):
     ### Load in all files ################################################
     with mrcfile.open(tomo_path) as mrctomo: # get tomo data
         invert_tomo = mrctomo.data * -1 #flip black and white so peak_local_max picks up dark points
@@ -68,7 +78,7 @@ def realign_with_mono_selected(picks, tomo_path, tilt_path, aln_path, output_aln
 
     peaks = [ent for ent in picks if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
     peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, peaks)
-    make_IMOD_model_UPDATED(peak_coords_OI, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{tomo_name}_mpicks_oneItr')
+    make_IMOD_model_UPDATED(peak_coords_OI, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_secItr/{tomo_name}_mpicks_secItr')
     plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}')
     plt.close()
     print('made model')
@@ -196,7 +206,7 @@ if __name__ == "__main__":
             else:
                 folder2 = folder[-11:]
 
-        if folder == "20241206_AMmilled24-3_107" or i < 6:
+        if i < 7:
             continue
             
         print(folder)
@@ -216,16 +226,16 @@ if __name__ == "__main__":
             # fix Z for my tomo 
             #array[:,-1] += 15
             m_picks = np.array(array[:,1:4]/2).astype(int)
-            make_IMOD_model_UPDATED(m_picks, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_hoyoung_picks_direct')
+            make_IMOD_model_UPDATED(m_picks, f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_secItr/{folder}_hoyoung_picks_direct')
 
             # make_imod_model(array, 'asd', "tomo", f'/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_mpicks')
         # imodmodel.write(df, '/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder}_hoyoung_picksx2.mod')
         # tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder}_full_rec.mrc"
         # tomo = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}/{folder}_Vol.mrc"
-        tomo = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder2}_full_rec_BP_3DCTF_BIN4.mrc"
+        tomo = f"/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/{folder}/{folder2}_full_rec_BP_3DCTF_BIN4.mrc"
         tilt = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/{folder2}.mrc"
-        aln = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
-        output_aln = f"/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder2}_mpicks_oneItr.aln"
+        aln = f"/nrs/liza/cathy_tomos/mono_dimer_mpicks_oneItr/{folder2}_mpicks_oneItr.aln"
+        output_aln = f"/nrs/liza/cathy_tomos/mono_dimer_mpicks_secItr/{folder2}_mpicks_secItr.aln"
         tilt_com_path = f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/tilt.com"
         for line in open(tilt_com_path):
             if re.findall(r'OFFSET*', line) == ['OFFSET']:
@@ -233,24 +243,24 @@ if __name__ == "__main__":
                 alphaOffset = float(match[0])
         
         
-        with mrcfile.open(tilt) as mrctilt:
-            tilt_data = mrctilt.data
-            tilt_shape = tilt_data.shape
-            invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
-        read_alignment = read(f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder2}")
-        aretomo_aln = imod_to_aretomo(read_alignment, invert_shape, f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/tilt.com" )
-        output_path = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
-        write(aretomo_aln, f"{output_path}")
+        # with mrcfile.open(tilt) as mrctilt:
+        #     tilt_data = mrctilt.data
+        #     tilt_shape = tilt_data.shape
+        #     invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
+        # read_alignment = read(f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/{folder2}")
+        # aretomo_aln = imod_to_aretomo(read_alignment, invert_shape, f"/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/{folder}/best_alignment/tilt.com" )
+        # output_path = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
+        # write(aretomo_aln, f"{output_path}")
     #path_to_all_folders = "/nrs/elferich/15F1and5F11dimer/TOP_TOMOS/"
     # core_path = "/nrs/liza/cathy_tomos/mono_dimer/"
     # cmd_path = "/nrs/liza/cathy_tomos/cmd_monodi_init"
     # create_aretomo_alns(path_to_all_folders, core_path, cmd_path)
 
-        realign_with_mono_selected(m_picks, tomo, tilt, aln, output_aln, (center[i,1], center[i,2]), 120, 4,  alphaOffset, "09_02_2025")
-        
+        realign_with_mono_selected(m_picks, tomo, tilt, aln, output_aln, (center[i,1], center[i,2]), 120, 4,  alphaOffset, "09_03_2025")
+
         # realign_gold(tomo, tilt, aln, output_aln, bin = 4, rel_threshold= 0.6, center_OI = (245, 500), radius_OI=120, tomo_au_model= True)
-        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/{folder}', shell = True)
-        full_aretomo_to_imod(output_aln, tilt, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer/{folder}')
+        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer_secItr/{folder}', shell = True)
+        full_aretomo_to_imod(output_aln, tilt, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer_secItr/{folder}')
 
         print('done')
 
