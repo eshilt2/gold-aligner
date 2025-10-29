@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import math
 from scipy.ndimage import zoom
 
+from fidder.predict import predict_fiducial_mask
+from fidder.erase import erase_masked_region
+import torch
+
 def exclude_corner_artifacts(tomo_shape, # tuple : shape of tomogram (z, y, x)
                              tomo,       # array : mrc data array
                              rot,        # flt   : angle of tilt axis in degree relative to the y (vertical) axis taken from alignment file
@@ -43,13 +47,28 @@ def exclude_corner_artifacts(tomo_shape, # tuple : shape of tomogram (z, y, x)
 
     return masked_tomo
 
+def mask_fiducials(tomo):
+    # load your image
+    image = torch.tensor(tomo)
+    rm_fids_tomo = image
+    # use a pretrained model to predict a mask
+    for z, slice in enumerate(image):
+        mask, probabilities = predict_fiducial_mask(
+            slice, pixel_spacing=1.25, probability_threshold=0.5
+        )
+        rm_fids_tomo[z, :, :] = erase_masked_region(image=slice, mask=mask)
+        print(z)
+    return rm_fids_tomo
+
 if __name__ == '__main__':
     tomo_path = f"/nrs/liza/cathy_tomos/tomos_init_rerun/20241030_AMmilled12-2_53_Vol.mrc"
     
     with mrcfile.open(tomo_path) as mrctomo: # get tomo data
         invert_tomo = mrctomo.data * -1 #flip black and white so peak_local_max picks up dark points
         tomo_shape = invert_tomo.shape
-    masked_tomo = exclude_corner_artifacts(tomo_shape, invert_tomo, -85.2237, .95)
-    with mrcfile.new('/nrs/liza/cathy_tomos/test_reconstruction/test_patch/AMmilled12-2_53_sectioned_corner_rerun/20241030_AMmilled12-2_53_cornerFixed_rerun_Vol.mrc', overwrite = True) as mrc:
-        mrc.set_data(masked_tomo*-1)
+    # masked_tomo = exclude_corner_artifacts(tomo_shape, invert_tomo, -85.2237, .95)
+    rm_fids_tomo = mask_fiducials(invert_tomo)
+    array_tomo = np.array(rm_fids_tomo)
+    with mrcfile.new('/nrs/liza/cathy_tomos/test_reconstruction/test_rm_fiducials/20241030_AMmilled12-2_53_rm_fiducials_1.25_Vol.mrc', overwrite = True) as mrc:
+        mrc.set_data(array_tomo*-1)
     print('end')

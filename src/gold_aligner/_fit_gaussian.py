@@ -64,18 +64,28 @@ def get_3d_gaussian(xyz, x0, y0, z0, amp, sigma_x, sigma_y, sigma_z, background)
     return g_3d.ravel()
 
 def find_2d_gaussian_peak(image,        # array : initially aligned data from tomogram.mrc * -1 
-                          peak_coords   # list: list of coordinate list [x,y,z]
+                          peak_coords,   # list: list of coordinate list [x,y,z]
+                          sigma = None
                           ): 
     if image[tuple(peak_coords)] < 0:
         image = image - image.min()
+    if image.min() == image.max():
+        raw_shift = (0,0)
+        fitted_gauss = None
+        sigmas = None
+        return raw_shift, fitted_gauss, sigmas
     shape_img = image.shape
     x = np.arange(shape_img[1]) # x = 0 would be the first column 
     y = np.arange(shape_img[0]) # y = 0 would be the first row
 
     x,y = np.meshgrid(x,y)
     coords = (x, y)
-    guess = [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/20, shape_img[1]/20, image.min()] # [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/10, shape_img[1]/10, image.min()]
-    bounds = ([0, 0, 0, 0.1, 0.1, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
+    if sigma == None:
+        guess = [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/20, shape_img[1]/20, image.min()] # [peak_coords[1], peak_coords[0], image.max(), shape_img[0]/10, shape_img[1]/10, image.min()]
+        bounds = ([0, 0, 0, 0.1, 0.1, -np.inf], [100, 100, np.inf, np.inf, np.inf, np.inf])
+    else:
+        guess = [peak_coords[1], peak_coords[0], image.max(), sigma[0], sigma[1], image.min()]
+        bounds = ([0, 0, 0, sigma[0]-(sigma[0]*.1), sigma[1]-(sigma[1]*.1), -np.inf], [100, 100, image.max(), sigma[0]+(sigma[0]*.1), sigma[1]+(sigma[1]*.1), np.inf])
     try:
         fit, _ = curve_fit(get_2d_gaussian, coords, image.ravel(), p0=guess, bounds = bounds, method = 'trf', maxfev = 5000)
     except RuntimeError:
@@ -274,7 +284,9 @@ def get_3dgauss_mixture_take_1(xyz, x0_1, y0_1, z0_1, x0_2, y0_2, z0_2, pi, amp_
     g_3d = (amp_1 * pi * g1) + (amp_2 * (1 - pi) * g2) + background ## Add another amp! amp1 * pi * G1 + amp2 * (1 - pi) * G2
     return g_3d.ravel()
 
-
+def plot_3d_gauss_residuals(residuals): # try looking at the residuals of fitting rather than just the sigmas
+    
+    return
 
 if __name__ == '__main__':
     # # TESTING ##
