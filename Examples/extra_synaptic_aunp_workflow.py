@@ -31,6 +31,48 @@ from torch_grid_utils.fftfreq_grid import dft_center
 from torch_grid_utils.coordinate_grid import coordinate_grid
 from torch.nn.functional import conv2d
 
+def find_3d_gauss_peak(invert_tomo,     # array : initially aligned data from tomogram.mrc * -1 
+                           peak_coords,     # list: list of coordinate list [x,y,z]
+                           cutoff = 95      # int: disregaurd points with sigmas above certain percentile
+                           ): 
+    new_point_coords = []
+    list_of_sigmas = []
+    list_of_fitted = []
+    for entry in peak_coords:
+
+        # crops area around each point
+        selected_area = invert_tomo[entry[2]-5:entry[2]+5,entry[1]-5:entry[1]+5, entry[0]-5:entry[0]+5]
+        selected_area = selected_area - selected_area.min()
+        area_shape = selected_area.shape
+
+        x = np.arange(area_shape[2])
+        y = np.arange(area_shape[1])
+        z = np.arange(area_shape[0])
+
+        z, y, x = np.meshgrid(z, y, x, indexing='ij')
+        coords = (x, y, z)
+        guess = [area_shape[0]/2, area_shape[1]/2, area_shape[2]/2, selected_area.max(), area_shape[0]/5, area_shape[1]/5, area_shape[2]/5, selected_area.min()]
+        bounds = ([0, 0, 0, 0, 0.1, 0.1, 0.1, -np.inf], [7, 7, 7, np.inf, 2.25, 2.25, 5, np.inf])
+        fit, _ = curve_fit(get_3d_gaussian, coords, selected_area.ravel(), p0=guess, bounds = bounds, method = 'dogbox')
+        x0, y0, z0, amp, sigx, sigy, sigz, back = fit
+        list_of_fitted.append(get_3d_gaussian((x,y,z),*fit).reshape(area_shape))
+        x_c = x0-5 + entry[0]
+        y_c = y0-5 + entry[1]
+        z_c = z0-5 + entry[2]
+        new_point_coords.append([x_c,y_c,z_c])
+        list_of_sigmas.append([sigx,sigy,sigz])
+        
+    new_point_coords = np.array(new_point_coords)
+
+    unzip_sig = list(zip(*list_of_sigmas))
+    cutoff_value = [np.percentile(np.array(unzip_sig[dim]), cutoff) for dim in range(3)] 
+    indx_discard = [np.where(unzip_sig[dim] >= cutoff_value[dim]) for dim in range(3)]
+    discard = np.concatenate([indx_discard[0][0], indx_discard[1][0], indx_discard[2][0]])
+    peak_coords_OI = np.delete(new_point_coords, discard, axis = 0)
+    list_of_fitted = np.delete(list_of_fitted, discard, axis = 0)
+    list_of_sigmas = np.delete(list_of_sigmas, discard, axis = 0)
+    return peak_coords_OI, list_of_fitted, list_of_sigmas 
+
 
 def realign_custom( tomo_path,              # str   : path and name of tomogram
                     tilt_path,              # str   : path and name of tilt series
@@ -91,7 +133,7 @@ def realign_custom( tomo_path,              # str   : path and name of tomogram
             peak_coords = select_aunps_rect_region(invert_tomo, rel_threshold, border_cutoff, (393,352), (742,793)) 
     # peaks = [ent for ent in peak_coords if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
     peaks = peak_coords
-    peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, peaks)
+    peak_coords_OI, _, list_of_sigmas = find_3d_gauss_peak(invert_tomo, peaks)
     make_IMOD_model_UPDATED(peak_coords_OI, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/EGmilled24-2_68_main_az_plus/{tomo_name}')
     plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/{date}/{tomo_name}:_{len(list_of_sigmas)}')
     plt.close()
@@ -131,23 +173,44 @@ def realign_custom( tomo_path,              # str   : path and name of tomogram
     write(imod_aln, f"/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/EGmilled24-2_68_main_az_plus/20231017_EGmilled24-2_68")
     write(aretomo3_alignment, output_aln_path)
 
+def just_fit_sigmas(og_tomo_path, new_tomo_path, center_OI, radius_OI, date):
+    border_cutoff = (70,50,50)
+    with mrcfile.open(og_tomo_path) as mrctomo: # get tomo data
+        og_invert_tomo = mrctomo.data * -1 #flip black and white so peak_local_max picks up dark points
+    
+    with mrcfile.open(new_tomo_path) as mrctomo: # get tomo data
+        new_invert_tomo = mrctomo.data * -1 #flip black and white so peak_local_max picks up dark points
+    
+    _, og_peaks = select_aunps(og_invert_tomo, 0.3, border_cutoff, center_OI, radius_OI)
+    _, new_peaks = select_aunps(new_invert_tomo, 0.3, border_cutoff, center_OI, radius_OI)
+    og_peak_OI, _, og_list_of_sigmas = find_3d_gaussian_peaks(og_invert_tomo, og_peaks)
+    new_peak_OI, _, new_list_of_sigmas = find_3d_gaussian_peaks(new_invert_tomo, new_peaks)
 
-aln_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/20231017_EGmilled24-2_68'
-tilt_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/20231017_EGmilled24-2_68.mrc'
-tilt_com_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/tilt.com'
-output_aln_path = '/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/EGmilled24-2_68_main_az_plus/20231017_EGmilled24-2_68.aln'
-aln = read(aln_path)
-with mrcfile.open(tilt_path) as mrctilt:
-    tilt = mrctilt.data
-    tilt_shape = tilt.shape
-    invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
+    compare_3d_sigmas(og_list_of_sigmas, 'original', new_list_of_sigmas, 're-aligned', f'/groups/liza/Pictures/{date}/comparison_of_alignment_boxplot_EGmilled24-2_68.png', '20231017_EGmilled24-2_68 comparison')
 
-for line in open(tilt_com_path):
-    if re.findall(r'OFFSET*', line) == ['OFFSET']:
-        match = re.findall(r'[0-9]+.[0-9]+', line)
-        alphaOffset = float(match[0])
+if __name__ == '__main__':
+    og_tomo_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/20231017_EGmilled24-2_68_full_rec_BP_3DCTF_BIN4.mrc'
+    new_tomo_path = '/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/EGmilled24-2_68_x515_y485/20231017_EGmilled24-2_68_full_rec_BP_3DCTF_BIN4.mrc'
+    
+    just_fit_sigmas(og_tomo_path, new_tomo_path, (515, 485), 120, '11_07_2025')
 
-tomo_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/20231017_EGmilled24-2_68_full_rec_BP_3DCTF_BIN4.mrc'
 
-realign_custom(tomo_path, tilt_path, aln_path, output_aln_path, (748,830), 120, 4, "10_23_2025", 0.3, alphaOffset)
-print('done')
+    aln_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/20231017_EGmilled24-2_68'
+    tilt_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/20231017_EGmilled24-2_68.mrc'
+    tilt_com_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/tilt.com'
+    output_aln_path = '/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/EGmilled24-2_68_main_az_plus/20231017_EGmilled24-2_68.aln'
+    aln = read(aln_path)
+    with mrcfile.open(tilt_path) as mrctilt:
+        tilt = mrctilt.data
+        tilt_shape = tilt.shape
+        invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
+
+    for line in open(tilt_com_path):
+        if re.findall(r'OFFSET*', line) == ['OFFSET']:
+            match = re.findall(r'[0-9]+.[0-9]+', line)
+            alphaOffset = float(match[0])
+
+    tomo_path = '/scratch/pompeii/elferich/gouaux_tomo/tomograms/15F1_tomograms/TOP_TOMOS/20231017_EGmilled24-2_68/best_alignment/20231017_EGmilled24-2_68_full_rec_BP_3DCTF_BIN4.mrc'
+
+    realign_custom(tomo_path, tilt_path, aln_path, output_aln_path, (748,830), 120, 4, "10_23_2025", 0.3, alphaOffset)
+    print('done')
