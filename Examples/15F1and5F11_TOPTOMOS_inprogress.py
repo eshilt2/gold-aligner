@@ -1,5 +1,16 @@
 # dual aunp workflow
 
+### NOTES ###
+# 1.) I did not load in the aretomo .aln correctly, I should have used:             
+#       {...}
+#           invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
+#       aretomo3_alignment = aretomo3_alignment.to_aretomo(ts_size=invert_shape)
+#    I had not so when I wrote the imod files the shape was wrong.
+# 
+# 2.) MAKE SURE TO CHECK THE ALPHA OFFSET
+#    Good rule of thumb is to make sure the tilts splay out about equally around 0 in the aretomo aln
+#    If not, make sure the AlphaOffset is being applied correctly
+
 import numpy as np
 from cryoet_alignment import read, write 
 from cryoet_alignment.io.cryoet_data_portal import Alignment
@@ -62,6 +73,9 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     else:
         aretomo3_alignment = read_alignment
 
+    if alpha_offset != aretomo3_alignment.AlphaOffset and alpha_offset != None: # checks if alpha offset is incorrect and adjusts it
+        aretomo3_alignment = fix_alpha_offset(aretomo3_alignment, alpha_offset)
+
     with mrcfile.open(tilt_path) as mrctilt:
         if aretomo3_alignment.DarkFrames == []:
             tilt = mrctilt.data
@@ -76,10 +90,14 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     tomo_num = re.findall(r"(._\d*_*).mrc",tilt_path)[0] # gets tomo number for im
     tomo_name = re.findall(r".*/(.*).mrc",tilt_path)[0]
     ######################################################################
-
+    
     peaks = [ent for ent in picks if center_OI[0]+radius_OI > ent[0] and ent[0] >center_OI[0]-radius_OI and center_OI[1]+radius_OI > ent[1] and ent[1] >center_OI[1]-radius_OI]
+    if len(peaks) < 12:
+        print(f"{tomo_name} number:{number} failed")
+        return (tomo_name, number, 'fail')
+
     peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, peaks)
-    make_IMOD_model_UPDATED(peak_coords_OI, f'//nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress/{tomo_name}/{tomo_name}_azs_mpicks_{number}')
+    make_IMOD_model_UPDATED(peak_coords_OI, f'//nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2/{tomo_name}/{tomo_name}_azs_mpicks_{number}')
     plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/{date}/{tomo_name}_az{number}:_{len(list_of_sigmas)}')
     plt.close()
     print('made model')
@@ -91,7 +109,8 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     
     # Convolve cirlce with pixel placement
     conv_image, rev_conv_coords = fourier_convolution(circle_img, base_img, False)
-    # make_IMOD_model_UPDATED(final_coords, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress/{tomo_name}/{tomo_name}_tilt_picks_{number}')
+    f = final_coords[:-1] +1
+    # make_IMOD_model_UPDATED(final_coords, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2/{tomo_name}/{tomo_name}_ZEROalphaOffset')
 
 
     cropped_phase, shift, saved_cropped_phase = cross_corr(tilt*-1, conv_image)
@@ -107,9 +126,6 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     fig3 = plot_xcorr_peaks(autoxcorr_phase, autoxcorr_shift, f'{tomo_name}_az{number} with ideal sigma')
     plt.savefig(f"/groups/liza/Pictures/{date}/{tomo_name}_az{number}:_{len(list_of_sigmas)}_autoxcorrxcorr_with_fixed_sigma.png", dpi=300)
     plt.close()
-
-    if alpha_offset != aretomo3_alignment.AlphaOffset and alpha_offset != None: # checks if alpha offset is incorrect and adjusts it
-        aretomo3_alignment = fix_alpha_offset(aretomo3_alignment, alpha_offset)
     
     for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
         algnmt.tx = algnmt.tx + shift[i][0] 
@@ -120,88 +136,11 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
 
     imod_aln = aretomo_to_imod(aretomo3_alignment, tilt_shape, 2.5)
 
-    write(imod_aln, f"{output_aln}/{tomo_name}")
-    write(aretomo3_alignment, f"{output_aln_path}/{tomo_name}aln")
+    write(imod_aln, f"{output_aln_path}/{tomo_name}")
+    write(aretomo3_alignment, f"{output_aln_path}/{tomo_name}.aln")
+    return (tomo_name, number, 'complete')
 
-def create_aretomo_alns(path_to_all_folders, core_path, cmd_path):
-    folder_list = os.listdir(path_to_all_folders)
-    skip_list = [
-    "20250418_AMmilled29-2_Position_58_7",
-    "20250418_AMmilled29-2_Position_88",
-    "20250418_AMmilled29-2_Position_47",
-    "20250418_AMmilled29-2_Position_86",
-    "20250418_AMmilled29-2_Position_87"]
-    for i, folder in enumerate(folder_list):
-        if folder == '.stfolder': # allows for picking up after an error (use debugger to see which folder it got stuck on)
-            continue
-        # if folder in skip_list:
-        #     folder = 
-        tilt_path = f"{path_to_all_folders}{folder}/{folder}.mrc"
-        aln_path = f"{path_to_all_folders}{folder}/best_alignment/{folder}"
-        if os.path.exists(f"{aln_path}.xf"):
-            print(f"Folder '{aln_path}' exists.")
-            if os.path.exists(f"{path_to_all_folders}{folder}/best_alignment/active_zonograms"):
-                folder_path = f"{path_to_all_folders}{folder}/best_alignment"
-        #     elif os.path.exists(f"{path_to_all_folders}{folder}/fiducial_tracking/active_zonograms"):
-        #         folder_path = f"{path_to_all_folders}{folder}/fiducial_tracking"
-        #         aln_path = f"{path_to_all_folders}{folder}/fiducial_tracking/{folder}"
-        #     else:             
-        #         aln_path = f"{path_to_all_folders}{folder}/patch_tracking/{folder}"
-        #         folder_path = f"{path_to_all_folders}{folder}/patch_tracking"
-        # elif os.path.exists(f"{path_to_all_folders}{folder}/fiducial_tracking/{folder}.xf"):
-        #         folder_path = f"{path_to_all_folders}{folder}/fiducial_tracking"
-        #         aln_path = f"{path_to_all_folders}{folder}/fiducial_tracking/{folder}"
-        # else:
-        #     aln_path = f"{path_to_all_folders}{folder}/patch_tracking/{folder}"
-        #     folder_path = f"{path_to_all_folders}{folder}/patch_tracking"
-        if os.path.exists(f"/nrs/liza/cathy_tomos/mono_dimer/{folder}") == False:
-            subprocess.run(f"mkdir /nrs/liza/cathy_tomos/mono_dimer/{folder}/", shell = True)
-        output_path = f"/nrs/liza/cathy_tomos/mono_dimer_init/{folder}_init.aln"
-
-
-        #convert IMOD to Aretomo3 .aln
-        aln = read(aln_path)
-        with mrcfile.open(tilt_path) as mrctilt:
-            tilt = mrctilt.data
-            tilt_shape = tilt.shape
-            invert_shape = (tilt_shape[2], tilt_shape[1], tilt_shape[0])
-
-        check = imod_to_aretomo(aln, invert_shape, f"{folder_path}/{folder}.tlt")
-        
-        write(check, output_path)
-
-        # convert IMOD .tlt to Aretomo3 _TLT.txt
-        subprocess.run(f"ln -sfn {folder_path}/{folder}.tlt {core_path}{folder}/{folder}_TLT.txt", shell = True)
-        subprocess.run(f"ln -sfn {output_path} {core_path}{folder}/{folder}.aln", shell = True)
-        subprocess.run(f"ln -sfn {path_to_all_folders}/{folder}/{folder}.mrc {core_path}{folder}/{folder}.mrc", shell = True)
-
-        cmd = (
-        "ml cuda/cuda-11.3.1 &&"
-        f"/nrs/liza/AreTomo3/AreTomo3 -InPrefix {core_path}{folder}/20 "
-        f"-InSuffix .mrc -OutDir /nrs/liza/cathy_tomos/mono_dimer_init/ -Cmd 2 -Serial 1 -Wbp 1 -FlipVol 1 "
-        "-VolZ 1600 -AtBin 4 -Gpu 0 -Cs 0.01"
-        )
-        with open(cmd_path, "w") as file:
-            file.write(cmd) 
-
-        subprocess.run([
-            "gnome-terminal",
-            "--wait",
-            "--",
-            "bash", "-i", "-c", f"{cmd_path}"
-        ])
-        
-        print(folder)
-    print('end')
-
-
-
-if __name__ == "__main__":
-# grab tomo name --> read in mono coords --> set tomo to 3DCTF corrected tomo --> aln to init aln
-    import starfile
-    import ast
-    
-
+def open_napari_for_centers():
     tomogram_list = [
     "20251014_AMmilled39-1_Position_32",
     "20251014_AMmilled39-1_Position_33",
@@ -231,59 +170,149 @@ if __name__ == "__main__":
     "20251117_AMmilled40-2_Position_60_3"
     ]
     for i, folder in enumerate(tomogram_list):
-        if i == 0:
-            continue
+        if os.path.exists(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment/"):
+            path2tomo = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment/"
+        elif os.path.exists(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/"):
+            path2tomo = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/"
+        else:
+            path2tomo = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking/"
+        os.chdir(path2tomo)
+        subprocess.run('napari *_full_rec_BP_3DCTF_BIN4.mrc', shell = True)
+
+def make_aretomo_tomos():
+    path = "/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2"
+    folder_list = os.listdir(path)
+    for i, folder in enumerate(folder_list):
+        folder_path = f"{path}/{folder}"
+        num_list = os.listdir(folder_path)
+        for num in num_list:
+            if len(num) > 2:
+                continue
+            if os.path.exists(f"{folder_path}/{num}/{folder}.aln"):
+
+                os.chdir(f"{folder_path}/{num}/")
+                subprocess.run(
+                    f'ln -sfn /nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/{folder}.mrc '
+                    f'/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/{folder}.rawtlt .',
+                    shell=True
+                )
+
+                cmd = (
+                    "#!/bin/bash\n"
+                    "ml cuda/cuda-11.3.1\n"
+                    f"/nrs/liza/AreTomo3/AreTomo3 -InPrefix {folder_path}/{num}/20 "
+                    f"-InSuffix .mrc -OutDir {folder_path}/{num}/ -Cmd 2 -Serial 1 -Wbp 1 -FlipVol 1 "
+                    "-VolZ 1500 -AtBin 4 -Gpu 0 -Cs 0.01\n"
+                    # No exec bash
+                )
+
+                cmd_path = "./aretomo_cmd"
+                with open(cmd_path, "w") as f:
+                    f.write(cmd)
+                os.chmod(cmd_path, 0o755)
+
+                subprocess.run(["bash", cmd_path], check=True)
+
+                # subprocess.run([
+                #     "gnome-terminal",
+                #     "--wait",
+                #     "--",
+                #     "bash", "-c", f"{cmd_path}"
+                # ])
+
         print(folder)
-        os.chdir(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/")
-        
+
+def get_xf():
+    folder_names = os.listdir('/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/')
+    for folder in folder_names:
+        azs = os.listdir(f'/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/{folder}')
         tilt_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/{folder}.mrc"
-        aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment/{folder}"
-        if os.path.exists(f"{aln_path}.xf"):
+        for num in azs:
+            print(folder, num)
+            os.chdir(f"/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/{folder}/{num}")
+            aretomo3_alignment = read(f"/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/{folder}/{num}/{folder}.aln")
+
+            with mrcfile.open(tilt_path) as mrctilt:
+                if aretomo3_alignment.DarkFrames == []:
+                    tilt = mrctilt.data
+                    tilt_shape = tilt.shape
+                else:
+                    tilt = mrctilt.data
+                    dark_slices = [frame.section_idx for frame in aretomo3_alignment.DarkFrames]
+                    tilt = np.delete(tilt, dark_slices, axis = 0)
+                    tilt_shape = tilt.shape 
+            flip_shape = (tilt.shape[2], tilt.shape[1], tilt.shape[0])
+            print('loaded files')        
+            imod_aln = aretomo_to_imod(aretomo3_alignment, flip_shape, 2.5)
+            write(imod_aln, f"/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/{folder}/{num}/{folder}")
+
+
+
+
+
+if __name__ == "__main__":
+# grab tomo name --> read in mono coords --> set tomo to 3DCTF corrected tomo --> aln to init aln
+    import starfile
+    import ast
+    get_xf()
+    make_aretomo_tomos()
+    centers_df = pd.read_csv('/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/15F1_5F11_TOPTOMOS_inprogress_centers.tsv', sep='\t')
+    tomo_names= centers_df['Tomo Name']
+    centers = centers_df['[(x1,y1),(x2,y2),...]']
+    outcomes = []
+    # open_napari_for_centers()
+    for i, folder in enumerate(tomo_names):
+        if i < 9:
+            continue
+        cent = ast.literal_eval(centers[i])
+        
+        for num, center in enumerate(cent):
+            os.chdir(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/")
+        
+            tilt_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/{folder}.mrc"
             aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment/{folder}"
-            folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment"
+            if os.path.exists(f"{aln_path}.xf"):
+                aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment/{folder}"
+                folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/best_alignment"
 
-        elif os.path.exists(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/active_zonograms"):
-            folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking"
-            aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/{folder}"
+            elif os.path.exists(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/active_zonograms"):
+                folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking"
+                aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/fiducial_tracking/{folder}"
 
-        else:             
-            aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking/{folder}"
-            folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking"
-        # else:
-        #     aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking/{folder}"
-        #     folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking"
-        aunps = starfile.read(f"{folder_path}/manual_picking_aunp_HK_re.star")
-        aunps = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX", "type"]]
+            else:             
+                aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking/{folder}"
+                folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking"
+            # else:
+            #     aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking/{folder}"
+            #     folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/patch_tracking"
+            aunps = starfile.read(f"{folder_path}/manual_picking_aunp_HK_re.star")
+            aunps = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX", "type"]]
 
-        picks = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX"]].to_numpy()
-        picks = np.array(picks)
-        make_IMOD_model_UPDATED(aunps, f'/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/imod_model')
-
-        subprocess.run(f'napari {folder_path}/{folder}_full_rec_BP_3DCTF_BIN4.mrc imod_model.mod ' , shell = True)
-
-        center = input('enter as list of tuples:')
-        with open(f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/az_coords.txt", "w") as f:
-            f.write(center)
-        centers = ast.literal_eval(center)
-        for number, pair in enumerate(centers):
+            picks = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX"]].to_numpy()
+            picks = np.array(picks)
+            make_IMOD_model_UPDATED(aunps, f'/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/imod_model')
 
             tomo = f"{folder_path}/{folder}_full_rec_BP_3DCTF_BIN4.mrc"
             tilt = f"/nrs/liza/cathy_tomos/15F1and5F11_TOPTOMOS/{folder}/{folder}.mrc"
             aln = f"{aln_path}"
-            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress/{folder}', shell = True)
-
-            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress/{folder}/{number}', shell = True)
-            output_aln = f"/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress/{folder}/{number}"
+            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2/{folder}', shell = True)
+            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2/{folder}/{num}', shell = True)
+            output_aln = f"/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_TOPTOMOS_inprogress2/{folder}/{num}"
             tilt_com_path = f"{folder_path}/tilt.com"
+
 
             for line in open(tilt_com_path):
                 if re.findall(r'OFFSET*', line) == ['OFFSET']:
                     match = re.findall(r'[0-9]+.[0-9]+', line)
                     alphaOffset = float(match[0])
+        
+            print(alphaOffset)
+            if alphaOffset == 0:
+                print('')
+            date = "01_08_2026"
+            outcome = realign_with_mono_selected(picks, tomo, tilt, aln, output_aln, center, 120, 4,  alphaOffset, date, num)
+            outcomes.append(outcome)
 
-            realign_with_mono_selected(picks, tomo, tilt, aln, output_aln, (pair[0], pair[1]), 120, 4,  0, "12_04_2025", number)
-            # realign_gold(tomo, tilt, aln, output_aln, bin = 4, rel_threshold= 0.6, center_OI = (245, 500), radius_OI=120, tomo_au_model= True)
-            # subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer_azs/{folder}/aunp_tracking_{number}', shell = True)
-            # full_aretomo_to_imod(output_aln, tilt, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/mono_dimer_azs/{folder}/aunp_tracking_{number}')
+    print(outcomes)
+            # realign_with_mono_selected(picks, tomo, tilt, aln, output_path, (235,526), 120, 4,  0, "12_05_2025", 0)
 
-        print('done')
