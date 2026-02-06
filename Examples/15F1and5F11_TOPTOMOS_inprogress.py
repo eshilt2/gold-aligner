@@ -236,12 +236,13 @@ def get_xf():
                 if aretomo3_alignment.DarkFrames == []:
                     tilt = mrctilt.data
                     tilt_shape = tilt.shape
+                    flip_shape = (tilt.shape[2], tilt.shape[1], tilt.shape[0])
                 else:
                     tilt = mrctilt.data
+                    flip_shape = (tilt.shape[2], tilt.shape[1], tilt.shape[0])
                     dark_slices = [frame.section_idx for frame in aretomo3_alignment.DarkFrames]
                     tilt = np.delete(tilt, dark_slices, axis = 0)
                     tilt_shape = tilt.shape 
-            flip_shape = (tilt.shape[2], tilt.shape[1], tilt.shape[0])
             print('loaded files')        
             imod_aln = aretomo_to_imod(aretomo3_alignment, flip_shape, 2.5)
             write(imod_aln, f"/nrs/liza/cathy_tomos/for_transfer/15F1and5F11_TOPTOMOS_inprogress/{folder}/{num}/{folder}")
