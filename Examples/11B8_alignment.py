@@ -47,7 +47,7 @@ from torch.nn.functional import conv2d
 from pathlib import Path
 
 def get_az_centers(tomo_names, best):
-    base = Path("/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127")
+    base = Path("/nrs/liza/cathy_tomos/11B8_init")
     results = []
 
     for n, tomo_name in enumerate(tomo_names):
@@ -171,7 +171,7 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     
     peak_coords_rounded = np.round(peaks).astype(int)
     peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks_fix(invert_tomo, peak_coords_rounded)
-    make_IMOD_model_UPDATED(peak_coords_OI, f'//nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_NEW_20250127/{tomo_name}/{tomo_name}_azs_mpicks_{number}')
+    make_IMOD_model_UPDATED(peak_coords_OI, f'//nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/{tomo_name}/{tomo_name}_azs_mpicks_{number}')
     plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/{date}/{tomo_name}_az{number}:_{len(list_of_sigmas)}')
     plt.close()
     print('made model')
@@ -184,7 +184,7 @@ def realign_with_mono_selected(picks,               # array : preselected picks 
     # Convolve cirlce with pixel placement
     conv_image, rev_conv_coords = fourier_convolution(circle_img, base_img, False)
     f = final_coords[:-1] +1
-    # make_IMOD_model_UPDATED(final_coords, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_NEW_20250127/{tomo_name}/{tomo_name}_ZEROalphaOffset')
+    # make_IMOD_model_UPDATED(final_coords, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/{tomo_name}/{tomo_name}_ZEROalphaOffset')
 
 
     cropped_phase, shift, saved_cropped_phase = cross_corr(tilt*-1, conv_image)
@@ -219,9 +219,9 @@ if __name__ == "__main__":
 # grab tomo name --> read in mono coords --> set tomo to 3DCTF corrected tomo --> aln to init aln
     import starfile
     import ast
-    centers_df = pd.read_csv('/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/15F1and5F11_NEW_20250127_patchvfid.csv', sep=',')
-    tomo_names= centers_df['Tomogram name AuNP']
-    best = centers_df['best']
+    centers_df = pd.read_csv('/nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/11B8_patchvfid.csv', sep=',')
+    tomo_names= centers_df['tomo_name']
+    best = centers_df['type']
     az_centers = get_az_centers(tomo_names,best)
     az_centers_df = pd.DataFrame(az_centers)
     az_centers_df['outcome'] = None
@@ -231,33 +231,34 @@ if __name__ == "__main__":
 
 
     for i, az in enumerate(az_centers):
-        if i<18:
-            az_centers_df = pd.read_csv("/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/az_centers_with_outcomes.csv", sep=',')
-            continue
+        # if i<18:
+        #     az_centers_df = pd.read_csv("/nrs/liza/cathy_tomos/11B8/az_centers_with_outcomes.csv", sep=',')
+        #     continue
 
         folder = az['tomo_name']
         az_num = az['az_num']
         center = az['center']
         best_type = az['type']
-        os.chdir(f"/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/")
+        
+        os.chdir(f"/nrs/liza/cathy_tomos/11B8/{folder}/")
     
-        tilt_path = f"/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/{folder}.mrc"
-        aln_path = f"/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/{best_type}_tracking/{folder}"
-        folder_path = f"/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/{best_type}_tracking"
+        tilt_path = f"/nrs/liza/cathy_tomos/11B8/{folder}/{folder}.mrc"
+        aln_path = f"/nrs/liza/cathy_tomos/11B8/{folder}/{best_type}_tracking/{folder}"
+        folder_path = f"/nrs/liza/cathy_tomos/11B8/{folder}/{best_type}_tracking"
 
-        aunps = starfile.read(f"{folder_path}/dual/{folder}_maunal_HK.star")
-        aunps = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX", "type"]]
+        aunps = starfile.read(f"{folder_path}/aunps/aunp_tm_BP_active_zone_all.star")
+        aunps = aunps[["faCoordinateX", "faCoordinateY", "faCoordinateZ", 'active_zone']]
 
-        picks = aunps[["faCoordinateZ", "faCoordinateY", "faCoordinateX"]].to_numpy()
+        picks = aunps[["faCoordinateX", "faCoordinateY", "faCoordinateZ"]].to_numpy()
         picks = np.array(picks)
-        make_IMOD_model_UPDATED(aunps, f'/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/imod_model')
+        make_IMOD_model_UPDATED(aunps, f'/nrs/liza/cathy_tomos/11B8/{folder}/imod_model')
 
         tomo = f"{folder_path}/{folder}_full_rec_BP_3DCTF_BIN4.mrc"
-        tilt = f"/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/{folder}/{folder}.mrc"
+        tilt = f"/nrs/liza/cathy_tomos/11B8/{folder}/{folder}.mrc"
         aln = f"{aln_path}"
-        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_NEW_20250127/{folder}', shell = True)
-        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_NEW_20250127/{folder}/{az_num}', shell = True)
-        output_aln = f"/nrs/liza/cathy_tomos/ddw/imod_alignments/15F1and5F11_NEW_20250127/{folder}/{az_num}"
+        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/{folder}', shell = True)
+        subprocess.run(f'mkdir /nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/{folder}/{az_num}', shell = True)
+        output_aln = f"/nrs/liza/cathy_tomos/ddw/imod_alignments/11B8/{folder}/{az_num}"
         tilt_com_path = f"{folder_path}/tilt.com"
 
 
@@ -270,12 +271,12 @@ if __name__ == "__main__":
 
     
 
-        date = "02_09_2026"
+        date = "02_27_2026"
         outcome = realign_with_mono_selected(picks, tomo, tilt, aln, output_aln, center, 120, 4,  alphaOffset, date, az_num)
         az_centers_df.loc[i, 'outcome'] = outcome
 
         az_centers_df.to_csv(
-            "/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127/az_centers_with_outcomes.csv",
+            "/nrs/liza/cathy_tomos/11B8/az_centers_with_outcomes.csv",
             index=False
         )
 

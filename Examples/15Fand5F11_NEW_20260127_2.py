@@ -219,6 +219,7 @@ if __name__ == "__main__":
 # grab tomo name --> read in mono coords --> set tomo to 3DCTF corrected tomo --> aln to init aln
     import starfile
     import ast
+
     centers_df = pd.read_csv('/nrs/liza/cathy_tomos/15F1and5F11_NEW_20250127_2/15F1and5F11_NEW_20250127_2.csv', sep=',')
     tomo_names= centers_df['tomo_name']
     best = centers_df['best']
@@ -227,6 +228,7 @@ if __name__ == "__main__":
     az_centers_df['outcome'] = None
 
     outcomes = []
+    
 
     for i, az in enumerate(az_centers):
         # if i<18:
