@@ -213,68 +213,61 @@ def phase_cross_correlation(mrc_img, conv_gold_im_path):
             shift[i] = raw_shift[i][0] - 50, raw_shift[i][1] - 50
             #shift[i], error[i], phasediff[i] = phase_cross_correlation(mrc_img_flipped[i], model_conv[i], disambiguate = True, space = "real")
     return shift
+
+
 ## INITIAL RUN
-
-def first_pass_realignment():
-    conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer.mrc"
-    mrc_img, final_coords = align_to_tilt(get_AUNP_positions(center, radius)[0], get_AUNP_positions(center, radius)[1])
-    shifts = phase_cross_correlation(mrc_img, conv_gold_im_path)
-
-    # use shifts to create .aln file
-    aretomo3_alignment = read("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln")
-    with mrcfile.open(conv_gold_im_path) as mrc:
-        model_conv = mrc.data
-        for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
-            algnmt.tx = algnmt.tx + shifts[i][1] 
-            algnmt.ty = algnmt.ty + shifts[i][0]
-
-    aretomo3_alignment = read("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln")
-    x_coord, y_coord, z_coord = zip(*final_coords)
-    final_subset_coords = []
-    for slice in range(0,mrc_img.shape[0]):
-        index_range = np.where(np.array(z_coord) == slice)
-        subset_coords = final_coords[index_range[0][0]:index_range[0][-1]]
-        for coord in subset_coords:
-            final_subset_coords.append([coord[0] + shifts[slice][1], coord[1] + shifts[slice][0], slice])
-    final_subset_coords = np.array(final_subset_coords)
-
-    write(aretomo3_alignment, "/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_fixed_xy.aln")
-    if os.path.isfile("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_old_fixedtilt.aln") == False:
-        os.rename('/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln', '/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_old_fixedtilt.aln')
-        os.rename('/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_fixed_xy.aln', '/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln')
-    else:
-        print("File has already been fixed, please review if you'd like to continue")
-
-## adjust position of conv_gold to see if shift will be 0
-
 conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer.mrc"
 mrc_img, final_coords = align_to_tilt(get_AUNP_positions(center, radius)[0], get_AUNP_positions(center, radius)[1])
 shifts = phase_cross_correlation(mrc_img, conv_gold_im_path)
-conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer_post_alignment.mrc"
-shifts_post_alignment = phase_cross_correlation(mrc_img, conv_gold_im_path)
 
+# use shifts to create .aln file
+aretomo3_alignment = read("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln")
 with mrcfile.open(conv_gold_im_path) as mrc:
-    gold_mask = mrc.data
-    for z, shift in enumerate(shifts_post_alignment):
-        np.roll(gold_mask[z], int(shift[0]/2), axis = 1)
-        np.roll(gold_mask[z], int(shift[1]/2), axis = 0)
-    conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer.mrc"
-    mrc_path = "/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.mrc"
-    test = phase_cross_correlation(gold_mask,mrc_path)
+    model_conv = mrc.data
+    for i, algnmt in enumerate(aretomo3_alignment.GlobalAlignments):
+        algnmt.tx = algnmt.tx + shifts[i][1] 
+        algnmt.ty = algnmt.ty + shifts[i][0]
+
+write(aretomo3_alignment, "/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_fixed_xy.aln")
+if os.path.isfile("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_old_fixedtilt.aln") == False:
+    os.rename('/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln', '/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_old_fixedtilt.aln')
+    os.rename('/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68_fixed_xy.aln', '/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln')
+else:
+    print("File has already been fixed, please review if you'd like to continue")
 
 
 
 
+
+
+## adjust position of conv_gold to see if shift will be 0
+
+# aretomo3_alignment = read("/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.aln")
+# x_coord, y_coord, z_coord = zip(*final_coords)
+# final_subset_coords = []
+# for slice in range(0,mrc_img.shape[0]):
+#     index_range = np.where(np.array(z_coord) == slice)
+#     subset_coords = final_coords[index_range[0][0]:index_range[0][-1]]
+#     for coord in subset_coords:
+#         final_subset_coords.append([coord[0] + shifts[slice][1], coord[1] + shifts[slice][0], slice])
+# final_subset_coords = np.array(final_subset_coords)
+
+# conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer.mrc"
+# mrc_img, final_coords = align_to_tilt(get_AUNP_positions(center, radius)[0], get_AUNP_positions(center, radius)[1])
+# shifts = phase_cross_correlation(mrc_img, conv_gold_im_path)
+# conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer_post_alignment.mrc"
+# shifts_post_alignment = phase_cross_correlation(mrc_img, conv_gold_im_path)
+
+# with mrcfile.open(conv_gold_im_path) as mrc:
+#     gold_mask = mrc.data
+#     for z, shift in enumerate(shifts_post_alignment):
+#         np.roll(gold_mask[z], int(shift[0]/2), axis = 1)
+#         np.roll(gold_mask[z], int(shift[1]/2), axis = 0)
+#     conv_gold_im_path = "/nrs/liza/gold-aligner/gold_conv_images/gold_convolution_layer.mrc"
+#     mrc_path = "/nrs/liza/aretomoe3_remove_patch/20231017_EGmilled24-2_68.mrc"
+#     test = phase_cross_correlation(gold_mask,mrc_path)
 
 #create_model_layer(mrc_img, final_subset_coords)
-
-
-
-print('stop')
-
-
-
-
 
 #list1, list2, list3 = zip(*final_coords)
 # chosen_slice = 16

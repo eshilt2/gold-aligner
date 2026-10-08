@@ -52,14 +52,20 @@ def make_sectioned_area(n, tomo_shape):
 
     y_splits = np.array_split(np.arange(tomo_shape[1]), n)
     x_splits = np.array_split(np.arange(tomo_shape[2]), n)
-
+    section_centers = {}
     label = 1
     for i, y_idx in enumerate(y_splits):
         for j, x_idx in enumerate(x_splits):
             arr[:, y_idx[:, None], x_idx] = label
-            label += 1
+            
 
-    return arr
+            y_center = int(np.mean(y_idx))
+            x_center = int(np.mean(x_idx))
+
+            section_centers[label] = (y_center, x_center)
+            label += 1
+    return arr, section_centers
+
 
 
 def realign_gold(tomo_path,                     # str               : path to initially aligned tomogram.mrc file
@@ -75,8 +81,8 @@ def realign_gold(tomo_path,                     # str               : path to in
                  tilt_conv_au_model = False,    # T/F               : will return .mod of convolved gold in tilt series
                  alpha_offset = None,           # int               : correct Alpha Offset if known    
                  n_sections = 4,                # int               : n x n section generation of tomogram
-                 img_output_path = '/groups/liza/Pictures/06_07_2025', 
-                 core_folder_path = '/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/20240111_WaffleHipp_183', 
+                 img_output_path = '/groups/liza/Pictures/06_07_2025/iterative_filtering', 
+                 core_folder_path = '/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/20240111_WaffleHipp_183/iterative_filtering', 
                  debugger = False
                  ):            
     
@@ -115,23 +121,33 @@ def realign_gold(tomo_path,                     # str               : path to in
     ###  Select gold particles in tomo  ##################################
     
     _, peak_coords = select_aunps(invert_tomo, rel_threshold, border_cutoff, None, None)
-    sectioned_area = make_sectioned_area(n=n_sections, tomo_shape=tomo_shape)
+    sectioned_area, sectioned_centers = make_sectioned_area(n=n_sections, tomo_shape=tomo_shape)
 
     all_peaks = select_aunps_sectioned(invert_tomo, rel_threshold, border_cutoff, sectioned_area)
+    
     peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, all_peaks)
-    filtered_coords, filtered_sigmas = zip(*[
-        (coord, sigma) for coord, sigma in zip(peak_coords_OI, list_of_sigmas)
-        if sigma[0] >= 0.5 and sigma[1] >= 0.5 and sigma[2] >= 1 and sigma[2] < 4
-        ])
-    filtered_coords = np.array(filtered_coords)
-    filtered_sigmas = np.array(filtered_sigmas)
+    selected_points = peak_coords_OI
+    selected_sigmas = list_of_sigmas
 
-    pred = cluster_points(filtered_coords, f'{img_output_path}/{tomo_name}_{rel_threshold}_cluster.png', True)
-    selected_points = filtered_coords[pred != -1]
-    selected_sigmas = filtered_sigmas[pred != -1]
+    low_xy_sigma = 0.5
+    low_z_sigma = 1
+    while len(selected_points) >= 500:
+        filtered_coords, filtered_sigmas = zip(*[
+            (coord, sigma) for coord, sigma in zip(selected_points, selected_sigmas)
+            if sigma[0] >= low_xy_sigma and sigma[1] >= low_xy_sigma and sigma[2] >= low_z_sigma and sigma[2] < 4
+            ])
+        filtered_coords = np.array(filtered_coords)
+        filtered_sigmas = np.array(filtered_sigmas)
+
+        pred = cluster_points(filtered_coords, f'{img_output_path}/{tomo_name}_{rel_threshold}_cluster.png', True)
+        selected_points = filtered_coords[pred != -1]
+        selected_sigmas = filtered_sigmas[pred != -1]
+        low_xy_sigma += 0.025
+        low_z_sigma += 0.025
+
     if tomo_au_model == True: # returns .mod model of all points selected in tomogram
-        plot_3d_sigmas(selected_sigmas, tomo_name, f'{img_output_path}/{tomo_name}:_{len(selected_sigmas)}_{rel_threshold}_yes_fiducials_filtered.png')
-        make_imod_model(np.array(selected_points), tomo_num, custom_name = f'{core_folder_path}/{tomo_name}_{rel_threshold}_post_cluster_yes_fiducial')
+        plot_3d_sigmas(selected_sigmas, tomo_name, f'{img_output_path}/{tomo_name}:_{len(selected_sigmas)}_{rel_threshold}_continuous_filter.png')
+        make_imod_model(np.array(selected_points), tomo_num, custom_name = f'{core_folder_path}/{tomo_name}_{rel_threshold}_continuous_filter')
 
     x, y, z = np.array(selected_points).T
     region_labels = sectioned_area[z.astype(int), y.astype(int), x.astype(int)]
@@ -222,7 +238,7 @@ def realign_gold(tomo_path,                     # str               : path to in
 
         aretomo3_alignment.LocalAlignments = [] # if this was run w local patch correction, this removes that 
         aretomo3_alignment.NumPatches = 0 # also to revert from initial local patch correction to global only
-        patch_aln_path = f"{output_aln_path}{tomo_name}/patch_{patch}/{tomo_name}_patch_{patch}_autoxcorr.aln"
+        patch_aln_path = f"{output_aln_path}/patch_{patch}/{tomo_name}_patch_{patch}_autoxcorr.aln"
         write(aretomo3_alignment, patch_aln_path)
 
         subprocess.run(f'ln -sfn {patch_aln_path} /nrs/liza/cathy_tomos/15f1_top_topop/{tomo_name}/{tomo_name}.aln', shell = True)
@@ -250,6 +266,26 @@ if __name__ == '__main__':
     # cmd_path = "/nrs/liza/cathy_tomos/cmd_patch_align"
     # align_by_patch(main_path, cmd_path)
 
+    path_to_all_folders = '/nrs/liza/cathy_tomos/15f1_top_topop/'
+
+    folder_list = os.listdir(path_to_all_folders)
+    for i, folder in enumerate(folder_list):
+        if folder == '.stfolder' or folder == "20240111_WaffleHipp_150" or folder == "20240901_AMmilled13-1_43" or i == 0: # allows for picking up after an error (use debugger to see which folder it got stuck on)
+            continue
+        if os.path.exists(f"/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}"== False):
+            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}', shell = True)
+        if os.path.exists(f"/groups/liza/Pictures/06_07_2025/{folder}"== False):
+            subprocess.run(f'mkdir /groups/liza/Pictures/06_07_2025/{folder}', shell = True)
+        tomo = f"/nrs/liza/cathy_tomos/tomos_init_rerun/{folder}_Vol.mrc"
+        tilt = f"/nrs/liza/cathy_tomos/15f1_top_topop/{folder}/{folder}.mrc"
+        aln = f"/nrs/liza/cathy_tomos/tomos_init_rerun/{folder}_rerun.aln"
+        aln_output = f"/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}"
+        img_output_path = f'/groups/liza/Pictures/06_07_2025/{folder}'
+        core_folder_path = f'/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}'
+
+        realign_gold(tomo, tilt, aln, aln_output, (5,50,50), 0.3, 4, tomo_au_model= True, img_output_path=img_output_path, core_folder_path=core_folder_path)
+
+
     tomo = f"/nrs/liza/cathy_tomos/tomos_init_rerun/20240111_WaffleHipp_183_Vol.mrc"
     tilt = f"/nrs/liza/cathy_tomos/15f1_top_topop/20240111_WaffleHipp_183/20240111_WaffleHipp_183.mrc"
     aln = f"/nrs/liza/cathy_tomos/tomos_init_rerun/20240111_WaffleHipp_183_rerun.aln"
@@ -259,24 +295,9 @@ if __name__ == '__main__':
     i = 0.3
     realign_gold(tomo, tilt, aln, aln_output, border_cutoff= border, rel_threshold=i, bin = bin, tomo_au_model = True, tilt_au_model=False, alpha_offset = None, debugger=False)
 
-    path_to_all_folders = '/nrs/liza/cathy_tomos/15f1_top_topop/'
 
 
-    folder_list = os.listdir(path_to_all_folders)
-    for i, folder in enumerate(folder_list):
-        if folder == '.stfolder' or i>=7: # allows for picking up after an error (use debugger to see which folder it got stuck on)
-            continue
-        if os.path.exists(f"/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}"== False):
-            subprocess.run(f'mkdir /nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}', shell = True)
-        if os.path.exists(f"/groups/liza/Pictures/06_06_2025/{folder}"== False):
-            subprocess.run(f'mkdir /groups/liza/Pictures/06_06_2025/{folder}', shell = True)
-        tomo = f"/nrs/liza/cathy_tomos/tomos_init_rerun/{folder}_Vol.mrc"
-        tilt = f"/nrs/liza/cathy_tomos/15f1_top_topop/{folder}/{folder}.mrc"
-        aln = f"/nrs/liza/cathy_tomos/tomos_init_rerun/{folder}_rerun.aln"
-        aln_output = f"/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}"
-        img_output_path = f'/groups/liza/Pictures/06_06_2025/{folder}'
-        core_folder_path = f'/nrs/liza/cathy_tomos/test_reconstruction/test_xcorr/{folder}'
-        realign_gold(tomo, tilt, aln, aln_output, (5,50,50), 0.3, tomo_au_model= True, img_output_path=img_output_path, core_folder_path=core_folder_path)
+
 
 
     tomo = f"/nrs/liza/cathy_tomos/tomos_init_rerun/20231017_EGmilled24-2_68_Vol.mrc"

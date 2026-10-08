@@ -6,6 +6,7 @@ from gold_aligner._select_aunps import *
 from gold_aligner._convolution_and_cross_correlation import *
 from gold_aligner._make_IMOD_model import *
 from gold_aligner._fit_gaussian import *
+from gold_aligner._find_clusters import*
 
 import os
 from scipy import ndimage as ndi
@@ -23,6 +24,21 @@ from torch.nn.functional import conv2d
 from scipy.spatial import KDTree
 
 
+def make_sectioned_area(n, tomo_shape):
+    arr = np.zeros(tomo_shape, dtype=int)
+
+    y_splits = np.array_split(np.arange(tomo_shape[1]), n)
+    x_splits = np.array_split(np.arange(tomo_shape[2]), n)
+
+    label = 1
+    for i, y_idx in enumerate(y_splits):
+        for j, x_idx in enumerate(x_splits):
+            arr[:, y_idx[:, None], x_idx] = label
+            label += 1
+
+    return arr
+
+
 def realign_gold(tomo_path,                     # str               : path to initially aligned tomogram.mrc file
                  tilt_path,                     # str               : path to initially aligned tiltseries.mrc file
                  aln_path,                      # str               : path to aretomo3 generated .aln file used for initially aligned tomogram
@@ -37,7 +53,7 @@ def realign_gold(tomo_path,                     # str               : path to in
                  conv_radius = 7,               # int               : sets size of gold particle used for convolution
                  tilt_conv_au_model = False,    # T/F               : will return .mod of convolved gold in tilt series
                  alpha_offset = None,           # int               : correct Alpha Offset if known
-                 dimer = False,                 # bool              : if False uses single gaussian 3D fit; if True uses gaussian mixture model
+                 dimer = False,                 # bool              : if False uses single gaussian 3D fit; if True uses gaussian mixture model              
                  debugger = False
                  ):            
     
@@ -69,24 +85,62 @@ def realign_gold(tomo_path,                     # str               : path to in
     print('loaded files')        
 
     tomo_num = re.findall(r"(._\d*_*).mrc",tilt_path)[0] # gets tomo number for im
-    tomo_name = re.findall(r".*/(.*).mrc",tilt_path)
+    tomo_name = re.findall(r".*/(.*).mrc",tilt_path)[0]
     ######################################################################
     ###  Select gold particles in tomo  ##################################
-    _, peak_coords = select_aunps(invert_tomo, rel_threshold, border_cutoff, center_OI, radius_OI)
+    if debugger == False:
+        _, peak_coords = select_aunps(invert_tomo, rel_threshold, border_cutoff, center_OI, radius_OI)
+        while len(peak_coords) >= 500 or len(peak_coords) <= 9:
+            rel_threshold += 0.25
+            _, peak_coords = select_aunps(invert_tomo, rel_threshold, border_cutoff, center_OI, radius_OI)
+            while len(peak_coords) <= 9:
+                rel_threshold -= 0.1
+                _, peak_coords = select_aunps(invert_tomo, rel_threshold, border_cutoff, center_OI, radius_OI)
 
+
+        cluster_points(peak_coords, f'/groups/liza/Pictures/10_22_2025/{tomo_name}_{len(peak_coords)}.png', plot = True)
+    else:
+        sectioned_area = make_sectioned_area(n=4, tomo_shape=tomo_shape)
+        all_peaks = select_aunps_sectioned(invert_tomo, rel_threshold, border_cutoff, sectioned_area)
+        x, y, z = np.array(all_peaks).T
+        region_labels = sectioned_area[z, y, x]
+        peak_coords = np.array(all_peaks)[region_labels == 7]
     print('picked_peaks')
 
     if dimer == False: # fit gaussian model to find subpixel center
         peak_coords_OI, _, list_of_sigmas = find_3d_gaussian_peaks(invert_tomo, peak_coords)
+        selected_points = peak_coords_OI
+        selected_sigmas = list_of_sigmas
+
+        low_xy_sigma = 0.5
+        low_z_sigma = 1
+        while len(selected_points) >= 50:
+            filtered_coords, filtered_sigmas = zip(*[
+                (coord, sigma) for coord, sigma in zip(selected_points, selected_sigmas)
+                if sigma[0] >= low_xy_sigma and sigma[1] >= low_xy_sigma and sigma[2] >= low_z_sigma and sigma[2] < 4
+                ])
+            filtered_coords = np.array(filtered_coords)
+            filtered_sigmas = np.array(filtered_sigmas)
+
+            pred = cluster_points(filtered_coords, f'/groups/liza/Pictures/10_22_2025/{tomo_name}_{len(peak_coords)}', True)
+            selected_points = filtered_coords[pred != -1]
+            selected_sigmas = filtered_sigmas[pred != -1]
+            low_xy_sigma += 0.025
+            low_z_sigma += 0.025
+
+        peak_coords_OI = selected_points 
+        list_of_sigmas = selected_sigmas
     else:
         peak_coords_OI = get_mixed_gaussian(invert_tomo, peak_coords)
     print('3d gaussian fit')
 
 
     if tomo_au_model == True: # returns .mod model of all points selected in tomogram
-            make_imod_model(peak_coords_OI, tomo_num, custom_name = '/nrs/liza/cathy_tomos/test_reconstruction/test_thresholds/138_fid_test')
-            plot_3d_sigmas(list_of_sigmas, tomo_name, '/groups/liza/Pictures/05_29_2025/138_fid_test')
+            make_IMOD_model_UPDATED(peak_coords_OI, f'/nrs/liza/cathy_tomos/ddw/imod_alignments/extra_synaptic_AuNP/20231017_EGmilled24-2_68_x748_y830/20231017_EGmilled24-2_68')
+            plot_3d_sigmas(list_of_sigmas, tomo_name, f'/groups/liza/Pictures/10_22_2025/{tomo_name}:_{len(list_of_sigmas)}')
+            plt.close()
     print('made model')
+    print('')
     ######################################################################
     ### Align gold particles to tilt series ##############################
 
@@ -104,7 +158,7 @@ def realign_gold(tomo_path,                     # str               : path to in
 
         tilt_coords = np.array(final_coords)
             
-        make_imod_model(tilt_coords, tomo_num, "tilt")
+        make_imod_model(tilt_coords, tomo_num, f'/nrs/liza/cathy_tomos/test_reconstruction/test_patch/{tomo_name}')
 
 
     ######################################################################
@@ -122,10 +176,22 @@ def realign_gold(tomo_path,                     # str               : path to in
         conv_coords = np.array(rev_conv_coords)
         make_imod_model(conv_coords, tomo_num, "tilt_conv")
 
+
     ######################################################################
     ###  Cross correlation to get shift
-    cropped_phase, shift, saved_cropped_phase = cross_corr(tilt, conv_image)
+    cropped_phase, shift, saved_cropped_phase = cross_corr(tilt*-1, conv_image)
+    fig1 = plot_xcorr_peaks(saved_cropped_phase, shift, f'{tomo_name} cross corr')
+    plt.savefig(f"/groups/liza/Pictures/10_22_2025/{tomo_name}:_{len(list_of_sigmas)}_xcorr.png", dpi=300)
+    plt.close()
 
+    ideal_sigma, auto_shift, auto_cropped_phase = cross_corr(conv_image, conv_image)
+    fig2 = plot_xcorr_peaks(auto_cropped_phase, auto_shift, f'Auto xcorr conv_img {tomo_name}')
+    plt.savefig(f"/groups/liza/Pictures/10_22_2025/{tomo_name}:_{len(list_of_sigmas)}_auto_xcorr_mask.png", dpi=300)
+
+    _, autoxcorr_shift, autoxcorr_phase = cross_corr(tilt * -1, conv_image, ideal_sigma)
+    fig3 = plot_xcorr_peaks(autoxcorr_phase, autoxcorr_shift, f'{tomo_name} with ideal sigma')
+    plt.savefig(f"/groups/liza/Pictures/10_22_2025/{tomo_name}:_{len(list_of_sigmas)}_autoxcorrxcorr_with_fixed_sigma.png", dpi=300)
+    plt.close()
     ######################################################################
     ### Create new .aln file
 
@@ -144,23 +210,27 @@ def realign_gold(tomo_path,                     # str               : path to in
     return saved_cropped_phase, shift
 
 if __name__ == '__main__':
-    
-    tomo = "/nrs/liza/cathy_tomos/tomos_init_rerun/20240111_WaffleHipp_138_Vol.mrc"
-    tilt = "/nrs/liza/cathy_tomos/15f1_top_topop/20240111_WaffleHipp_138/20240111_WaffleHipp_138.mrc"
-    aln = "/nrs/liza/cathy_tomos/15f1_top_topop/20240111_WaffleHipp_138/20240111_WaffleHipp_138_original.aln"
-    aln_output = "/nrs/liza/cathy_tomos/test_reconstruction/20240111_WaffleHipp_138_test.aln"
+    tomo = f"/nrs/liza/cathy_tomos/top_exclude_init/20240523_HippWaffle_129_Vol.mrc"
+    tilt = "/nrs/liza/cathy_tomos/top_exclude/20240523_HippWaffle_129/20240523_HippWaffle_129.mrc"
+    aln = "/nrs/liza/cathy_tomos/top_exclude_init/20240523_HippWaffle_129_init.aln"
+    aln_output = "/nrs/liza/cathy_tomos/top_exclude_oneItr/20240523_HippWaffle_129_oneItr.aln"
+
+
+    # master_path = "/nrs/liza/cathy_tomos/15f1_top_topop/"
+    # folder_list = os.listdir(master_path)
+    # for i, folder in enumerate(folder_list):
+    #     if folder == "20231026_HippAu_26":
+    #         tomo = f"/nrs/liza/cathy_tomos/tomos_init_rerun/{folder}_Vol.mrc"
+    #         tilt = f"/nrs/liza/cathy_tomos/15f1_top_topop/{folder}/{folder}.mrc"
+    #         aln = f"/nrs/liza/cathy_tomos/15f1_top_topop/{folder}/{folder}_original.aln"
+    #         aln_output = "/nrs/liza/cathy_tomos/test_reconstruction/20240111_WaffleHipp_138_test.aln.aln"
 
     bin = 4
-    # center = (335, 190)
-    # radius = 120
-    # center = (460,800) # tomo 64
-    # center = (100, 380) # tomo 127
-    # radius = 120
+    center = (632, 374)
+    radius = 120
     border = (5,50,50)
-    # center = None
-    # radius = None
-    threshold = 0.3
-    realign_gold(tomo, tilt, aln, aln_output, border_cutoff= border, rel_threshold=threshold, bin = bin, tomo_au_model = True, tilt_au_model=False, alpha_offset = None, debugger=False)
+    threshold = 0.4
+    realign_gold(tomo, tilt, aln, aln_output, center_OI= center, radius_OI=radius, border_cutoff= border, rel_threshold=threshold, bin = bin, tomo_au_model = True, tilt_au_model=False, alpha_offset = None, debugger=False)
 
     # tomo = "/nrs/liza/hoyoung_dimer_tomos/dimer_tomos/dimer_tomos_init/20250210_HippWaffle_64_Vol.mrc"
     # tilt = "/nrs/liza/hoyoung_dimer_tomos/dimer_tomos/dual/20250210_HippWaffle_64.mrc"

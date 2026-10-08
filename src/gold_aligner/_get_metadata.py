@@ -46,7 +46,10 @@ def export_metadata_to_csv(metadata_np, output_path):
             ])
 
 if __name__ == "__main__":
-    path = "/nrs/liza/cathy_tomos/15f1_top_topop/"
-    metadata = get_metadata(path)
-    export_metadata_to_csv(metadata, output_path='cathy_tomos_metadata.csv')
-    df = pd.DataFrame(metadata)
+    csv_path = "nrs/liza/cathy_tomos/cathy_tomos_metadata.csv"
+    
+
+    # path = "/nrs/liza/cathy_tomos/15f1_top_topop/"
+    # metadata = get_metadata(path)
+    # export_metadata_to_csv(metadata, output_path='/nrs/liza/cathy_tomos/cathy_tomos_metadata.csv')
+    # df = pd.DataFrame(metadata)
